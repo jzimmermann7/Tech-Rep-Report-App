@@ -47,3 +47,268 @@ a {
     color-scheme: dark;
   }
 }
+
+/* --- Tech Rep Report Builder --- */
+
+.app-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+.app-header {
+  padding: 10px 16px;
+  border-bottom: 1px solid #d0d0d0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.app-header .job-path {
+  font-family: monospace;
+  font-size: 12px;
+  color: #555;
+  flex: 1;
+  min-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-body {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+}
+
+.sidebar {
+  width: 320px;
+  border-right: 1px solid #d0d0d0;
+  overflow-y: auto;
+  flex-shrink: 0;
+}
+
+.section-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 10px 14px;
+  border: none;
+  border-bottom: 1px solid #eee;
+  background: none;
+  color: #1a1a1a;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.section-item:hover {
+  background: rgba(11, 61, 145, 0.06);
+}
+
+.section-item.active {
+  background: rgba(11, 61, 145, 0.12);
+  font-weight: 600;
+}
+
+.section-item .title-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.status-badge {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 4px;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.status-badge.ready {
+  background: #dff5e1;
+  color: #1a7431;
+}
+
+.status-badge.needs-attention {
+  background: #fff3cd;
+  color: #8a6300;
+}
+
+.status-badge.missing {
+  background: #fbe0e0;
+  color: #a4141a;
+}
+
+.confidence-tag {
+  font-size: 10px;
+  color: #777;
+  margin-top: 2px;
+}
+
+.main-panel {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px 28px;
+}
+
+.section-reason {
+  font-size: 13px;
+  color: #555;
+  background: #f7f7f7;
+  padding: 8px 12px;
+  border-radius: 6px;
+  margin-bottom: 16px;
+}
+
+.confidence-note {
+  font-size: 12px;
+  color: #8a6300;
+  margin-bottom: 16px;
+}
+
+textarea.draft-textarea {
+  width: 100%;
+  min-height: 260px;
+  font-family: inherit;
+  font-size: 14px;
+  padding: 10px;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+}
+
+.toolbar {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.toolbar input[type="text"] {
+  flex: 1;
+  min-width: 220px;
+  padding: 8px 10px;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+}
+
+button {
+  padding: 8px 14px;
+  border-radius: 6px;
+  border: 1px solid #0b3d91;
+  background: #0b3d91;
+  color: white;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+button.secondary {
+  background: white;
+  color: #0b3d91;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+button.generate-report {
+  background: #1a7431;
+  border-color: #1a7431;
+  font-size: 15px;
+  padding: 12px 24px;
+}
+
+.preview-table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 12px;
+  margin-top: 10px;
+}
+
+.preview-table th,
+.preview-table td {
+  border: 1px solid #ddd;
+  padding: 4px 8px;
+}
+
+.preview-table th {
+  background: #0b3d91;
+  color: white;
+  position: sticky;
+  top: 0;
+}
+
+.preview-table td.fail {
+  color: #a4141a;
+  font-weight: 700;
+}
+
+.photo-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.photo-tile {
+  width: 160px;
+  border: 2px solid transparent;
+  border-radius: 6px;
+  overflow: hidden;
+  cursor: pointer;
+}
+
+.photo-tile.selected {
+  border-color: #1a7431;
+}
+
+.photo-tile img {
+  width: 100%;
+  height: 110px;
+  object-fit: cover;
+  display: block;
+}
+
+.photo-tile .caption {
+  font-size: 10px;
+  padding: 4px;
+  word-break: break-all;
+}
+
+.folder-picker {
+  padding: 40px;
+  max-width: 720px;
+  margin: 0 auto;
+}
+
+.folder-list {
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  max-height: 340px;
+  overflow-y: auto;
+  margin-top: 12px;
+}
+
+.folder-list button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  color: inherit;
+  border: none;
+  border-bottom: 1px solid #eee;
+  padding: 8px 12px;
+}
+
+.folder-list button:hover {
+  background: rgba(11, 61, 145, 0.08);
+}
+
+.file-count {
+  font-size: 12px;
+  color: #777;
+}

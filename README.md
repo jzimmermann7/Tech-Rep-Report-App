@@ -1,36 +1,27 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Tech Rep Report Builder
 
-## Getting Started
+Prototype: point this app at an APG job folder, review what it can and can't auto-draft for the I&A Report, edit/regenerate sections, and export the finished PDF.
 
-First, run the development server:
+## Setup
 
 ```bash
+npm install
+cp .env.local.example .env.local   # then fill in ANTHROPIC_API_KEY
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open http://localhost:3000. Section drafting (I&A Summary, FPI & Visual Inspection Summary, Dimensional Inspection Summary, Recommended Repairs, Photo Set) calls the Anthropic API and needs `ANTHROPIC_API_KEY` set — everything else (folder scanning, the four dimensional tables, attaching third-party PDFs, PDF export) works without it.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+PDF export (`Generate Report`) needs a local Chrome or Edge install (checks the usual Program Files locations) — no download required.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## What's real vs. stubbed
 
-## Learn More
+- **I&A Report**: fully implemented, reverse-engineered against a real completed job (APG Job 20443).
+- **Final Report**: not implemented yet — `src/lib/report-templates/final-report.ts` is an intentional stub. No completed job with a finished Final Report was available to reverse-engineer its structure from. The rest of the app (ingestion, drafting, review UI, PDF export) is written generically against the `ReportTemplate` shape, so filling this in is additive, not a rewrite.
+- **Crack Map**: only attached as-is when a source file is found by filename pattern (`crack*map`). The app never tries to interpret hand-marked findings from it — the source tracker itself rates that as low-confidence automation, and this prototype treats it as always-manual.
+- **Photo Set**: Claude vision suggests candidates, but the section is always flagged "review recommended" — click photos in the grid to override the selection before generating.
+- **Router-derived sections** (FPI & Visual Inspection Summary, Recommended Repairs): pulled from the job's "Router" `.xlsm` workbooks. Which operations are actually in scope for a given job is determined by reading the router's own prose ("not selected" / "not required" / a label starting with "No ...") rather than its Quantity/cost columns, which are driven by live cross-sheet formulas this app doesn't evaluate.
 
-To learn more about Next.js, take a look at the following resources:
+## Where job-review state lives
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Per-job edits, regenerated drafts, and photo selections are saved to `%LOCALAPPDATA%\TechRepReportApp\jobs\<hash>.json` — keyed by the job folder's path, not stored inside the job folder itself, so nothing is written back into the customer's OneDrive folder until you explicitly export the PDF.
