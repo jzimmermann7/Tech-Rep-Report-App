@@ -14,4 +14,12 @@ export interface ParsedTable {
   outOfSpecCount?: number;
   /** Assumptions, caveats, anything a reviewer should know before trusting this table. */
   notes: string[];
+  /** The form's own header block (e.g. DS-0554's Customer/Date/Page/Insp/Cast P/N row), read
+   * straight from the same source cells the real form prints — shown above the table so the
+   * report matches the original form's layout instead of just the data grid. */
+  formHeader?: Array<{ label: string; value: string }>;
+  /** Freeform "NOTES:" box the real form prints under the table, for a reviewer's handwritten
+   * remarks — kept as its own box (even when empty) rather than folded into `notes`, which are
+   * this app's own automated caveats, not part of the original form. */
+  hasNotesBox?: boolean;
 }

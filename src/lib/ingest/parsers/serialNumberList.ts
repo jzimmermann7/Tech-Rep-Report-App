@@ -8,11 +8,42 @@ import type { ParsedTable } from "./types";
  * column-blocks of [APG#, Serial#, Comment] starting at columns A, E, I,
  * each covering a third of the population. Data starts row 8.
  */
+/** DS-0554's own header block (confirmed against Job 20443): row 3 = Customer:/Date:/Page:,
+ * row 4 = APG Job #:/Insp:/Cast P/N:, row 5 = Unit/Frame:/Row/Stg:/Mach P/N:, each label in
+ * column B or F or H with its value one or two columns to the right. */
+function parseFormHeader(sheet: import("exceljs").Worksheet): Array<{ label: string; value: string }> {
+  const cellPairs: Array<[number, number, number]> = [
+    [3, 2, 3], // Customer: (B3 -> C3)
+    [3, 6, 7], // Date: (F3 -> G3)
+    [3, 8, 10], // Page: (H3 -> J3)
+    [4, 2, 3], // APG Job #: (B4 -> C4)
+    [4, 6, 7], // Insp: (F4 -> G4)
+    [4, 8, 10], // Cast P/N: (H4 -> J4)
+    [5, 2, 3], // Unit/Frame: (B5 -> C5)
+    [5, 6, 7], // Row/Stg: (F5 -> G5)
+    [5, 8, 10], // Mach P/N: (H5 -> J5)
+  ];
+  const header: Array<{ label: string; value: string }> = [];
+  for (const [row, labelCol, valueCol] of cellPairs) {
+    const label = cellText(sheet.getRow(row).getCell(labelCol)).trim();
+    let value = cellText(sheet.getRow(row).getCell(valueCol)).trim();
+    if (label.toLowerCase().startsWith("date") && value) {
+      // The Date cell reads as a full JS Date string when the source cell is date-typed
+      // rather than plain text -- reduce it to the same short date format the form prints.
+      const parsed = new Date(value);
+      if (!Number.isNaN(parsed.getTime())) value = parsed.toLocaleDateString("en-US");
+    }
+    if (label) header.push({ label, value });
+  }
+  return header;
+}
+
 export async function parseSerialNumberList(absolutePath: string): Promise<ParsedTable | null> {
   const workbook = await loadWorkbook(absolutePath);
   const sheet = workbook.worksheets.find((s) => /serial number sheet/i.test(s.name));
   if (!sheet) return null;
 
+  const formHeader = parseFormHeader(sheet);
   const blockStartCols = [1, 5, 9]; // A, E, I
   const rows: Array<Record<string, string>> = [];
 
@@ -50,5 +81,7 @@ export async function parseSerialNumberList(absolutePath: string): Promise<Parse
     sampleSize: trimmedRows.length,
     populationSize: trimmedRows.length,
     notes,
+    formHeader,
+    hasNotesBox: true,
   };
 }

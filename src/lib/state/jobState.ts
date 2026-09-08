@@ -15,6 +15,11 @@ export interface SectionState {
    * "needs-attention" or "missing" — lets "Generate Report" proceed deliberately. */
   acknowledged?: boolean;
   lastGeneratedAt?: string;
+  /** Set when automatic draft generation (on job-folder scan) couldn't produce content for this
+   * section — missing source data, a missing API key, a failed request, etc. Surfaced in the UI
+   * as an explicit "needs human review" flag instead of silently leaving the section blank.
+   * Cleared as soon as content is successfully generated or edited. */
+  draftError?: string;
 }
 
 export interface JobState {
@@ -51,6 +56,20 @@ export async function saveJobState(state: JobState): Promise<void> {
 export async function updateSectionState(jobRoot: string, sectionId: string, patch: Partial<SectionState>): Promise<JobState> {
   const state = await loadJobState(jobRoot);
   state.sections[sectionId] = { ...state.sections[sectionId], ...patch };
+  await saveJobState(state);
+  return state;
+}
+
+/** Applies patches for several sections in one read-modify-write. Calling `updateSectionState`
+ * concurrently for different sections is a lost-update race — each call reads the whole file,
+ * so whichever write lands last wins and silently drops the others. Anything that patches more
+ * than one section around the same time (e.g. drafting several sections in parallel) must batch
+ * through here instead. */
+export async function updateSectionStates(jobRoot: string, patches: Record<string, Partial<SectionState>>): Promise<JobState> {
+  const state = await loadJobState(jobRoot);
+  for (const [sectionId, patch] of Object.entries(patches)) {
+    state.sections[sectionId] = { ...state.sections[sectionId], ...patch };
+  }
   await saveJobState(state);
   return state;
 }

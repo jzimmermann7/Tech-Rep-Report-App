@@ -11,6 +11,12 @@ import type { ParsedTable } from "./types";
  * letter and its spec min/max embedded as text (e.g. "A\n0.795\" 0.815\""); column B holds the
  * position label.
  */
+/** Exported so scanJobFolder.ts's Excel-COM PDF fallback can select a matching sheet when it
+ * needs to render (not just read) this workbook -- see PRINT_PDF_SECTIONS. A looser combined
+ * form of the two-part check just below (good enough for that fallback; falls back to the
+ * workbook's first sheet if nothing matches at all). */
+export const DOVETAIL_SHEET_PATTERN = /dovetail|ds-?1017/i;
+
 export async function parseDovetailDimension(absolutePath: string): Promise<ParsedTable | null> {
   const workbook = await loadWorkbook(absolutePath);
   const sheet = workbook.worksheets.find((s) => /^ds-?1017$/i.test(s.name.trim()) || /dovetail/i.test(s.name));

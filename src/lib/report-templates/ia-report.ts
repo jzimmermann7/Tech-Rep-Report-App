@@ -20,9 +20,9 @@ export const iaReportTemplate: ReportTemplate = {
       sourceRules: [],
       dependsOnSections: ["fpiVisual", "dimensionalSummary", "recommendedRepairs"],
       generation: "llm-narrative",
-      automationConfidence: "medium",
+      automationConfidence: "high",
       confidenceNote:
-        "Reliable once drafted after the findings/dimensional sections exist; needs the standard boilerplate lines (seal-strip/root-galling removal, airfoil cleaning) folded in.",
+        "Built entirely from job metadata and whichever dimensional/exhibit data is on hand — no AI call, so no API key dependency. It's a fixed sentence template (received → visual → seal-strip/root-galling → dimensional → met-sample → airfoil-cleaning → FPI/visual) with facts slotted in, confirmed against a real completed report; optional bullets and clauses only appear when that data actually exists, rather than being invented.",
     },
     {
       id: "fpiVisual",
@@ -36,9 +36,9 @@ export const iaReportTemplate: ReportTemplate = {
         },
       ],
       generation: "llm-narrative",
-      automationConfidence: "medium",
+      automationConfidence: "high",
       confidenceNote:
-        "High when the router's FPI/visual note resolves to real text; low for any zone the note doesn't cover, since self-derived zone reading from raw findings is the weakest link.",
+        "Built directly from the router data — no AI call at all, so it never depends on an API key. Procedure/form numbers are pulled straight out of the router's own note text. The router's FPI note is procedural (what to inspect), never the actual zone-by-zone findings — those live only in the crack map, so the draft never tries to derive them: it defers to the crack map as its own exhibit when one's found, and explicitly states when findings aren't available rather than inventing them.",
     },
     {
       id: "dimensionalSummary",
@@ -47,7 +47,9 @@ export const iaReportTemplate: ReportTemplate = {
       dependsOnSections: ["heightDimForm", "dovetailDimension", "wallThickness"],
       generation: "llm-narrative",
       automationConfidence: "high",
-      confidenceNote: "Conclusion paragraph + counts derived directly from the computed pass/fail tables.",
+      alwaysReview: true,
+      confidenceNote:
+        "Built entirely from the computed pass/fail tables — no AI call at all, so it never depends on an API key. Drafts from whichever of Height Dim Form, Dovetail, and Wall Thickness are actually present, even if not all three are, and says plainly in the draft which ones are still missing. The overall repairability call is intentionally left for the tech rep to confirm, not asserted automatically.",
     },
     {
       id: "recommendedRepairs",
@@ -62,7 +64,8 @@ export const iaReportTemplate: ReportTemplate = {
       ],
       generation: "llm-narrative",
       automationConfidence: "high",
-      confidenceNote: "Standard repair sequence pulled from the Repair Router's resolved operation phrases.",
+      confidenceNote:
+        "Built directly from the router's own active step labels — no AI call, so no API key dependency; the earlier concern that this needed AI (and so couldn't run without sending the router to a model) no longer applies, since it's now pure code reading the file. Confirmed against a real completed report that APG's own convention is exactly this — the router's step labels in sequence, repeats and all — with only the \"(Opt)\" suffix and a handful of internal admin checkpoints (Foreman/Quality Review, QC hold point, Consumables) dropped.",
     },
     {
       id: "chemTest",
@@ -70,7 +73,7 @@ export const iaReportTemplate: ReportTemplate = {
       sourceRules: [
         {
           kind: "filenamePattern",
-          pattern: /chem.*(strip|test).*cert/i,
+          pattern: /chem.*(strip|test)/i,
           requiredExtensions: [".pdf"],
           preferFolder: /reports/i,
         },
@@ -88,12 +91,20 @@ export const iaReportTemplate: ReportTemplate = {
           pattern: /pictures/i,
           fileExtensions: [".jpg", ".jpeg", ".png"],
         },
+        {
+          // Fallback for jobs that paste incoming photos directly into a template document
+          // instead of keeping loose files in a Pictures folder — only used when the folder
+          // rule above finds nothing; see scanFileBackedSection's llm-vision-select branch.
+          kind: "filenamePattern",
+          pattern: /photo.*template/i,
+          requiredExtensions: [".pdf"],
+        },
       ],
       generation: "llm-vision-select",
-      automationConfidence: "low",
+      automationConfidence: "medium",
       alwaysReview: true,
       confidenceNote:
-        "Pure judgment call and the tech reps' #1 time-sink; not reliably derivable from data alone. Always requires human confirmation.",
+        "Preselects Incoming/NDT photos automatically — tech reps aren't picky about volume within that set, so the only screening is flagging exact/near-duplicates and shots too blurry to use. In-process/final-stage photos are still browsable but not preselected, since this is an incoming-inspection report. Falls back to extracting photos from a \"Photos Template\" PDF when there's no raw photo folder. Still flagged for human confirmation since it's an image-judgment call.",
     },
     {
       id: "crackMap",
@@ -106,10 +117,10 @@ export const iaReportTemplate: ReportTemplate = {
         },
       ],
       generation: "attach-as-is",
-      automationConfidence: "low",
+      automationConfidence: "high",
       alwaysReview: true,
       confidenceNote:
-        "High confidence to attach the scanned form as-is; low confidence to use it as a source for categorizing findings, so this prototype only attaches it and never auto-interprets the markings.",
+        "Same mechanism as Chem Test / Metallurgical Report: found by filename pattern and attached as-is, no drafting. Still flagged for human confirmation since this prototype never auto-interprets the markings — that's on the tech rep.",
     },
     {
       id: "serialNumberList",
@@ -150,7 +161,7 @@ export const iaReportTemplate: ReportTemplate = {
       generation: "table-from-source",
       automationConfidence: "high",
       confidenceNote:
-        "Tip & angel-wing heights from Form DS-0004. Some jobs keep the real data in a differently-named workbook next to a blank DS-0004 template — both are tried, and a blank match is skipped.",
+        "Tip & angel-wing heights from Form DS-0004. Some jobs keep the real data in a differently-named workbook next to a blank DS-0004 template — both are tried, and a blank match is skipped. When a completed, print-ready PDF of this exact form also exists on disk, the report embeds that PDF verbatim instead of a re-rendered table, so its diagrams and formatting come through intact — the spreadsheet is still what this review screen shows and what other sections' narratives draw from.",
     },
     {
       id: "dovetailDimension",
@@ -171,7 +182,7 @@ export const iaReportTemplate: ReportTemplate = {
       generation: "table-from-source",
       automationConfidence: "high",
       confidenceNote:
-        "Root/dovetail measurements from Form DS-1017. Often a sampled subset of the full population, not every serial number — the draft states the sample size explicitly.",
+        "Root/dovetail measurements from Form DS-1017. Often a sampled subset of the full population, not every serial number — the draft states the sample size explicitly. When a completed, print-ready PDF of this exact form also exists on disk, the report embeds that PDF verbatim instead of a re-rendered table.",
     },
     {
       id: "wallThickness",
@@ -186,7 +197,8 @@ export const iaReportTemplate: ReportTemplate = {
       ],
       generation: "table-from-source",
       automationConfidence: "high",
-      confidenceNote: "UT wall-thickness measurements; pass/fail computed against the printed minimum-limit row.",
+      confidenceNote:
+        "UT wall-thickness measurements; pass/fail computed against the printed minimum-limit row. When a completed, print-ready PDF of this exact form also exists on disk, the report embeds that PDF verbatim instead of a re-rendered table — and that PDF is used even if no matching spreadsheet exists at all for this job, rather than showing the section as missing.",
     },
     {
       id: "metallurgicalReport",

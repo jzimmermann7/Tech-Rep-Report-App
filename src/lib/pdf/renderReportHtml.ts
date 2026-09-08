@@ -1,50 +1,172 @@
 import { promises as fs } from "fs";
 import path from "path";
+import sharp from "sharp";
 import type { JobScanResult, SectionScanResult } from "../ingest/scanJobFolder";
 import { COVER_FIELD_ORDER } from "../ingest/jobMetadata";
 import type { JobState, SectionState } from "../state/jobState";
 import type { ParsedTable } from "../ingest/parsers/types";
 
+// APG's real letterhead colors, sampled directly from a completed report (Job #20443): a short
+// blue segment at the left of the header bar, gray for the rest of its width.
+const APG_BLUE = "#0046a1";
+const APG_BAR_GRAY = "#6a7683";
+
 function escapeHtml(text: string): string {
   return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
-function renderTable(table: ParsedTable): string {
-  const headerRow = `<tr>${table.columns.map((c) => `<th>${escapeHtml(c)}</th>`).join("")}</tr>`;
+let logoDataUriCache: string | null = null;
+
+/** APG's logo mark, extracted from a real completed report and stored at `public/apg-logo.jpg`.
+ * Cached per process since it's the same file on every page of every report. */
+async function logoDataUri(): Promise<string> {
+  if (!logoDataUriCache) {
+    const buffer = await fs.readFile(path.join(process.cwd(), "public", "apg-logo.jpg"));
+    logoDataUriCache = `data:image/jpeg;base64,${buffer.toString("base64")}`;
+  }
+  return logoDataUriCache;
+}
+
+/** The letterhead every non-cover page opens with in APG's usual report format: a small logo top
+ * left, the page's title centered next to it, and the blue-to-gray bar underneath. */
+function pageHeader(title: string, logo: string): string {
+  return `
+    <div class="letterhead">
+      <img class="logo" src="${logo}" alt="APG" />
+      <h1 class="page-title">${escapeHtml(title)}</h1>
+    </div>
+    <div class="letterhead-bar"></div>`;
+}
+
+/** data-col carries the raw column name onto each cell so specific columns (e.g. "APG #") can
+ * be targeted for centering etc. from CSS without hardcoding table-specific markup here. */
+function tdAttrs(col: string, row: Record<string, string | undefined>): string {
+  const cls = row[col]?.includes("OUT OF SPEC") ? ' class="fail"' : "";
+  return ` data-col="${escapeHtml(col)}"${cls}`;
+}
+
+function chunkRows<T>(rows: T[], numChunks: number): T[][] {
+  const perChunk = Math.ceil(rows.length / numChunks);
+  const chunks: T[][] = [];
+  for (let i = 0; i < rows.length; i += perChunk) chunks.push(rows.slice(i, i + perChunk));
+  return chunks;
+}
+
+/** The source form's own Customer/Date/Page/etc. header block, laid out the same 3-per-row grid
+ * the real form prints, right above the data table. */
+function renderFormHeader(formHeader: Array<{ label: string; value: string }> | undefined): string {
+  if (!formHeader || formHeader.length === 0) return "";
+  const cells = formHeader.map(({ label, value }) => `<div class="form-header-cell"><span class="form-header-label">${escapeHtml(label)}</span> ${escapeHtml(value)}</div>`).join("");
+  return `<div class="form-header-grid">${cells}</div>`;
+}
+
+/** The real form's blank "NOTES:" box for a reviewer's handwritten remarks under the table —
+ * kept even when there's nothing to say, since it's part of the original form's own layout. */
+function renderNotesBox(): string {
+  return `<div class="form-notes-box"><span class="form-notes-label">NOTES:</span></div>`;
+}
+
+/** columnBlocks > 1 reflows a long, simple list (currently just Serial Number List) into that
+ * many side-by-side mini-tables instead of one tall single-column table — mirroring the real
+ * DS-0554 form's own "three parallel column blocks" layout — so a 90+ row list takes a third as
+ * many printed pages instead of running on and on down a single column. */
+function renderTable(table: ParsedTable, options?: { columnBlocks?: number }): string {
+  const columnBlocks = options?.columnBlocks ?? 1;
+  const notes = table.notes.length ? `<p class="table-notes">${table.notes.map(escapeHtml).join("<br/>")}</p>` : "";
+  const formHeaderHtml = renderFormHeader(table.formHeader);
+  const notesBoxHtml = table.hasNotesBox ? renderNotesBox() : "";
+
+  if (columnBlocks > 1 && table.rows.length > columnBlocks) {
+    const headerRow = `<tr>${table.columns.map((c) => `<th data-col="${escapeHtml(c)}">${escapeHtml(c)}</th>`).join("")}</tr>`;
+    const blocks = chunkRows(table.rows, columnBlocks)
+      .map((rowsChunk) => {
+        const bodyRows = rowsChunk
+          .map((row) => `<tr>${table.columns.map((c) => `<td${tdAttrs(c, row)}>${escapeHtml(row[c] ?? "")}</td>`).join("")}</tr>`)
+          .join("");
+        return `<table class="table-block">${headerRow}${bodyRows}</table>`;
+      })
+      .join("");
+    return `${formHeaderHtml}<div class="table-columns">${blocks}</div>${notes}${notesBoxHtml}`;
+  }
+
+  const headerRow = `<tr>${table.columns.map((c) => `<th data-col="${escapeHtml(c)}">${escapeHtml(c)}</th>`).join("")}</tr>`;
   const bodyRows = table.rows
-    .map((row) => `<tr>${table.columns.map((c) => `<td class="${row[c]?.includes("OUT OF SPEC") ? "fail" : ""}">${escapeHtml(row[c] ?? "")}</td>`).join("")}</tr>`)
+    .map((row) => `<tr>${table.columns.map((c) => `<td${tdAttrs(c, row)}>${escapeHtml(row[c] ?? "")}</td>`).join("")}</tr>`)
     .join("");
   const summaryRows = (table.summaryRows ?? [])
-    .map((row) => `<tr class="summary">${table.columns.map((c) => `<td>${escapeHtml(row[c] ?? "")}</td>`).join("")}</tr>`)
+    .map((row) => `<tr class="summary">${table.columns.map((c) => `<td data-col="${escapeHtml(c)}">${escapeHtml(row[c] ?? "")}</td>`).join("")}</tr>`)
     .join("");
-  const notes = table.notes.length ? `<p class="table-notes">${table.notes.map(escapeHtml).join("<br/>")}</p>` : "";
-  return `<table>${headerRow}${bodyRows}${summaryRows}</table>${notes}`;
+  return `${formHeaderHtml}<table>${headerRow}${bodyRows}${summaryRows}</table>${notes}${notesBoxHtml}`;
 }
 
+/** Line-based markup matching APG's usual report style: a short line ending in ":" is a
+ * (subheading), a line starting with "- " is a bullet under whatever came before it, "NOTE:" at
+ * the start of a line gets bolded, and everything else is a plain paragraph — not one flowing
+ * block of prose. Blank lines just separate groups; they don't need their own markup. */
 function renderNarrative(text: string | undefined): string {
   if (!text) return `<p class="missing">No draft generated yet for this section.</p>`;
-  return text
-    .split(/\n{2,}/)
-    .map((para) => `<p>${escapeHtml(para).replace(/\n/g, "<br/>")}</p>`)
-    .join("");
+
+  const parts: string[] = [];
+  let listOpen = false;
+  const closeList = () => {
+    if (listOpen) {
+      parts.push("</ul>");
+      listOpen = false;
+    }
+  };
+
+  for (const rawLine of text.split("\n")) {
+    const line = rawLine.trim();
+    if (!line) {
+      closeList();
+      continue;
+    }
+    if (line.startsWith("- ")) {
+      if (!listOpen) {
+        parts.push(`<ul class="narrative-list">`);
+        listOpen = true;
+      }
+      parts.push(`<li>${escapeHtml(line.slice(2))}</li>`);
+      continue;
+    }
+    closeList();
+    if (/^NOTE:/i.test(line)) {
+      const rest = line.slice(line.indexOf(":") + 1).trim();
+      parts.push(`<p><strong>NOTE:</strong> ${escapeHtml(rest)}</p>`);
+    } else if (line.endsWith(":") && line.length <= 60) {
+      parts.push(`<p class="subhead">${escapeHtml(line)}</p>`);
+    } else {
+      parts.push(`<p>${escapeHtml(line)}</p>`);
+    }
+  }
+  closeList();
+  return parts.join("");
 }
 
-async function imageToDataUri(absolutePath: string): Promise<string> {
-  const buffer = await fs.readFile(absolutePath);
-  const ext = path.extname(absolutePath).toLowerCase();
-  const mime = ext === ".png" ? "image/png" : "image/jpeg";
-  return `data:${mime};base64,${buffer.toString("base64")}`;
+/** Downsizes a photo before embedding it in the report. Report photos are rendered small (a grid
+ * tile), but source camera photos can be several MB each at full resolution — a job with 90+
+ * selected photos embedded at full size produces an HTML document large enough to crash the PDF
+ * renderer outright (a real failure hit while testing photo selection: ~90MB of source JPEGs
+ * blew up the CDP connection puppeteer uses to load the page). 1200px on the long edge is more
+ * than enough detail for a report exhibit. */
+async function photoToDataUri(absolutePath: string): Promise<string> {
+  const buffer = await sharp(absolutePath).rotate().resize({ width: 1200, height: 1200, fit: "inside", withoutEnlargement: true }).jpeg({ quality: 72 }).toBuffer();
+  return `data:image/jpeg;base64,${buffer.toString("base64")}`;
 }
 
 async function renderPhotoSet(section: SectionScanResult, jobRoot: string, sectionState: SectionState | undefined): Promise<string> {
   const selectedPaths = sectionState?.selectedPhotoPaths;
-  const paths = selectedPaths && selectedPaths.length > 0 ? selectedPaths : section.matchedFiles.slice(0, 6).map((f) => f.relativePath);
+  // No arbitrary cap here — the default is every matched photo, same as the real preselection
+  // logic (selectBestPhotos). This only fires if a section somehow reached render with no
+  // selection recorded at all (an old job's saved state, say); it should still show everything,
+  // not a small last-resort sample.
+  const paths = selectedPaths && selectedPaths.length > 0 ? selectedPaths : section.matchedFiles.map((f) => f.relativePath);
   if (paths.length === 0) return `<p class="missing">No photos selected.</p>`;
   const images = await Promise.all(
     paths.map(async (relativePath) => {
       try {
-        const dataUri = await imageToDataUri(path.join(jobRoot, relativePath));
-        return `<figure><img src="${dataUri}" /><figcaption>${escapeHtml(relativePath)}</figcaption></figure>`;
+        const dataUri = await photoToDataUri(path.join(jobRoot, relativePath));
+        return `<figure><img src="${dataUri}" /></figure>`;
       } catch {
         return "";
       }
@@ -53,79 +175,156 @@ async function renderPhotoSet(section: SectionScanResult, jobRoot: string, secti
   return `<div class="photo-grid">${images.join("")}</div>`;
 }
 
-export async function renderReportHtml(scan: JobScanResult, state: JobState): Promise<string> {
+/** One piece of the final report: either a chunk of our own HTML (to be rendered to PDF via
+ * puppeteer) or a real source PDF whose pages get copied in verbatim at this exact point in the
+ * document. Splitting the report this way — rather than one HTML string with placeholder pages
+ * to find-and-replace afterward — means the real form's pages land at the right spot by
+ * construction (each segment's own page count), with no need to search a rendered PDF's text
+ * content to locate anything. */
+export type ReportSegment = { kind: "html"; html: string } | { kind: "pdf"; path: string };
+
+const REPORT_STYLES = (apgBlue: string, apgBarGray: string) => `
+  body { font-family: Arial, Helvetica, sans-serif; font-size: 11px; color: #1a1a1a; }
+  p { line-height: 1.5; margin: 0 0 10px; }
+  /* Underlined subheading (e.g. "Tips:", "Squealer Tip Thickness (E):") — APG's usual way of
+     breaking a summary into named categories instead of one flowing paragraph. */
+  p.subhead { text-decoration: underline; font-weight: 400; margin: 14px 0 0; }
+  p.subhead:first-child { margin-top: 0; }
+  .narrative-list { margin: 0 0 6px; padding-left: 22px; }
+  .narrative-list li { margin-bottom: 1px; line-height: 1.5; }
+  /* I&A Summary, FPI & Visual, Dimensional Summary, Recommended Repairs — larger than the base
+     body size (which stays small so data tables keep fitting) since these are the sections
+     someone actually sits down and reads. */
+  .narrative-section p, .narrative-section li { font-size: 14px; }
+  section { page-break-inside: avoid; }
+  section.report-page { page-break-before: always; margin-bottom: 16px; }
+  section.table-section { page-break-inside: auto; }
+
+  /* Letterhead used at the top of every page after the cover, matching APG's standard report
+     header: small logo, centered bold title, blue-to-gray bar underneath. The logo is absolutely
+     positioned so the title centers over the full page width, not the space left after the logo. */
+  .letterhead { position: relative; min-height: 40px; }
+  .letterhead .logo { position: absolute; left: 0; top: 0; height: 40px; }
+  .letterhead .page-title { text-align: center; font-size: 20px; font-weight: 700; color: #1a1a1a; margin: 0; padding-top: 6px; }
+  .letterhead-bar { height: 4px; margin: 6px 0 20px; background: linear-gradient(to right, ${apgBlue} 0 12%, ${apgBarGray} 12% 100%); }
+
+  /* Cover page */
+  .cover { text-align: center; padding-top: 60px; }
+  .cover-logo { width: 260px; margin-bottom: 24px; }
+  .cover h1 { font-size: 22px; margin: 0 0 40px; }
+  .cover-fields { display: inline-block; text-align: left; }
+  .cover-row { display: flex; gap: 24px; padding: 7px 0; font-size: 14px; }
+  .cover-label { width: 150px; flex-shrink: 0; color: #6a6a6a; font-weight: 700; }
+  .cover-value { font-weight: 700; color: #1a1a1a; }
+
+  table { border-collapse: collapse; width: 100%; margin-top: 8px; }
+  th, td { border: 1px solid #ccc; padding: 3px 6px; font-size: 9px; }
+  th { background: ${apgBlue}; color: white; }
+  tr.summary td { font-weight: bold; background: #f0f0f0; }
+  td.fail { background: #fff59d; font-weight: bold; }
+  th[data-col="APG #"], td[data-col="APG #"],
+  th[data-col="Serial #"], td[data-col="Serial #"] { text-align: center; }
+  .missing { color: #b00020; font-style: italic; }
+  .table-notes { font-size: 9px; color: #555; margin-top: 4px; }
+  /* Side-by-side mini-tables (see renderTable's columnBlocks) -- narrower per-block table so a
+     long simple list fits several columns across the page instead of one tall single column. */
+  .table-columns { display: flex; gap: 10px; align-items: flex-start; }
+  .table-columns .table-block { width: auto; flex: 1 1 0; margin-top: 8px; }
+
+  /* Source form's own Customer/Date/Page/etc. header block (see renderFormHeader), laid out as
+     the same 3-per-row grid the original form prints, directly above the table. */
+  .form-header-grid { display: grid; grid-template-columns: repeat(3, 1fr); border: 1px solid #000; margin-top: 10px; }
+  .form-header-cell { border: 1px solid #000; padding: 3px 6px; font-size: 10px; }
+  .form-header-label { font-weight: 700; margin-right: 4px; }
+  /* The real form's blank "NOTES:" box under the table (see renderNotesBox). */
+  .form-notes-box { border: 1px solid #000; min-height: 60px; margin-top: 10px; padding: 4px 6px; }
+  .form-notes-label { font-weight: 700; text-decoration: underline; font-size: 10px; }
+  .photo-grid { display: flex; flex-wrap: wrap; gap: 8px; }
+  .photo-grid figure { width: 30%; margin: 0; }
+  .photo-grid img { width: 100%; height: auto; border: 1px solid #ccc; }
+  .photo-grid figcaption { font-size: 8px; color: #555; word-break: break-all; }
+`;
+
+function wrapHtml(bodyHtml: string): string {
+  return `<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<style>${REPORT_STYLES(APG_BLUE, APG_BAR_GRAY)}</style>
+</head>
+<body>
+${bodyHtml}
+</body>
+</html>`;
+}
+
+export async function renderReportSegments(scan: JobScanResult, state: JobState): Promise<ReportSegment[]> {
   const sectionsById = new Map(scan.sections.map((s) => [s.id, s]));
   const contentFor = (id: string) => state.sections[id]?.content;
+  const logo = await logoDataUri();
 
-  const bodyParts: string[] = [];
+  const segments: ReportSegment[] = [];
+  let bodyParts: string[] = [];
+  const flush = () => {
+    if (bodyParts.length > 0) {
+      segments.push({ kind: "html", html: wrapHtml(bodyParts.join("\n")) });
+      bodyParts = [];
+    }
+  };
 
+  // Cover page: APG's usual incoming-report look — a large centered logo, the report title, and
+  // a left-aligned label/value list with no table borders (not a bordered grid).
   const coverOverrides = state.sections["cover"]?.fields ?? {};
   const coverRows = COVER_FIELD_ORDER.map(({ key, label }) => {
     const raw = (coverOverrides[key as string] ?? (scan.metadata[key] as string) ?? "").toString();
     const value = key === "date" ? raw.split("T")[0] : raw;
-    return `<tr><th>${escapeHtml(label)}</th><td>${escapeHtml(value)}</td></tr>`;
+    return `<div class="cover-row"><span class="cover-label">${escapeHtml(label)}:</span><span class="cover-value">${escapeHtml(value)}</span></div>`;
   }).join("");
 
   bodyParts.push(`
     <section class="cover">
+      <img class="cover-logo" src="${logo}" alt="APG" />
       <h1>${escapeHtml(scan.reportType)}</h1>
-      <table class="cover-table">${coverRows}</table>
+      <div class="cover-fields">${coverRows}</div>
     </section>`);
 
   const narrativeSectionIds = ["iaSummary", "fpiVisual", "dimensionalSummary", "recommendedRepairs"];
   for (const id of narrativeSectionIds) {
     const section = sectionsById.get(id);
     if (!section) continue;
-    bodyParts.push(`<section><h2>${escapeHtml(section.title)}</h2>${renderNarrative(contentFor(id))}</section>`);
+    bodyParts.push(`<section class="report-page narrative-section">${pageHeader(section.title, logo)}${renderNarrative(contentFor(id))}</section>`);
   }
 
   const tableSectionIds = ["serialNumberList", "heightDimForm", "dovetailDimension", "wallThickness"];
   for (const id of tableSectionIds) {
     const section = sectionsById.get(id);
     if (!section) continue;
-    const body = section.parsedTable ? renderTable(section.parsedTable) : `<p class="missing">No data available.</p>`;
-    bodyParts.push(`<section class="table-section"><h2>${escapeHtml(section.title)}</h2>${body}</section>`);
+    if (section.printPdfFile) {
+      // A completed, print-ready PDF of this exact form exists (see PRINT_PDF_SECTIONS) --
+      // don't render our own table here at all. Flush whatever HTML has accumulated so far as
+      // its own segment, drop in the real PDF as its own segment, and keep building HTML after
+      // it -- the real form's pages land at exactly this point in the final document.
+      flush();
+      segments.push({ kind: "pdf", path: section.printPdfFile.absolutePath });
+      continue;
+    }
+    const body = section.parsedTable
+      ? renderTable(section.parsedTable, { columnBlocks: id === "serialNumberList" ? 3 : 1 })
+      : `<p class="missing">No data available.</p>`;
+    bodyParts.push(`<section class="report-page table-section">${pageHeader(section.title, logo)}${body}</section>`);
   }
 
   const photoSection = sectionsById.get("photoSet");
   if (photoSection) {
     const photoHtml = await renderPhotoSet(photoSection, scan.jobRoot, state.sections["photoSet"]);
-    bodyParts.push(`<section><h2>${escapeHtml(photoSection.title)}</h2>${photoHtml}</section>`);
+    bodyParts.push(`<section class="report-page">${pageHeader(photoSection.title, logo)}${photoHtml}</section>`);
   }
 
   const crackMapSection = sectionsById.get("crackMap");
   if (crackMapSection && crackMapSection.status === "missing") {
-    bodyParts.push(`<section><h2>${escapeHtml(crackMapSection.title)}</h2><p class="missing">No crack map was found for this job.</p></section>`);
+    bodyParts.push(`<section class="report-page">${pageHeader(crackMapSection.title, logo)}<p class="missing">No crack map was found for this job.</p></section>`);
   }
 
-  return `<!doctype html>
-<html>
-<head>
-<meta charset="utf-8" />
-<style>
-  body { font-family: Arial, Helvetica, sans-serif; font-size: 11px; color: #1a1a1a; }
-  h1 { font-size: 22px; }
-  h2 { font-size: 15px; border-bottom: 2px solid #0b3d91; padding-bottom: 4px; margin-top: 28px; }
-  section { page-break-inside: avoid; margin-bottom: 16px; }
-  section.table-section { page-break-inside: auto; }
-  .cover { text-align: center; margin-top: 120px; }
-  .cover-table { margin: 24px auto; border-collapse: collapse; }
-  .cover-table th, .cover-table td { border: 1px solid #ccc; padding: 6px 12px; text-align: left; }
-  table { border-collapse: collapse; width: 100%; margin-top: 8px; }
-  th, td { border: 1px solid #ccc; padding: 3px 6px; font-size: 9px; }
-  th { background: #0b3d91; color: white; }
-  tr.summary td { font-weight: bold; background: #f0f0f0; }
-  td.fail { color: #b00020; font-weight: bold; }
-  .missing { color: #b00020; font-style: italic; }
-  .table-notes { font-size: 9px; color: #555; margin-top: 4px; }
-  .photo-grid { display: flex; flex-wrap: wrap; gap: 8px; }
-  .photo-grid figure { width: 30%; margin: 0; }
-  .photo-grid img { width: 100%; height: auto; border: 1px solid #ccc; }
-  .photo-grid figcaption { font-size: 8px; color: #555; word-break: break-all; }
-</style>
-</head>
-<body>
-${bodyParts.join("\n")}
-</body>
-</html>`;
+  flush();
+  return segments;
 }

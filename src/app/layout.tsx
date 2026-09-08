@@ -13,7 +13,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Tech Rep Report Builder",
+  title: "Report Builder",
   description: "Draft and review Allied Power Group I&A reports from a job folder.",
 };
 
