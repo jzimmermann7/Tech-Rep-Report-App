@@ -10,9 +10,13 @@ import type { ParsedTable } from "./types";
  * 50%, 10% span height), until a row whose Height-% column reads "MIN" (the source file's own
  * summary row, kept separately — do not treat it as a data row).
  */
+/** Exported so scanJobFolder.ts's Excel-COM PDF fallback can select the same sheet this parser
+ * would, when it needs to render (not just read) this workbook -- see PRINT_PDF_SECTIONS. */
+export const WALL_THICKNESS_SHEET_PATTERN = /wall thickness|ds-?0002/i;
+
 export async function parseWallThickness(absolutePath: string): Promise<ParsedTable | null> {
   const workbook = await loadWorkbook(absolutePath);
-  const sheet = workbook.worksheets.find((s) => /wall thickness|ds-?0002/i.test(s.name));
+  const sheet = workbook.worksheets.find((s) => WALL_THICKNESS_SHEET_PATTERN.test(s.name));
   if (!sheet) return null;
 
   const measureCols = [5, 6, 7, 8, 9, 10]; // E..J

@@ -1,13 +1,6 @@
 :root {
-  --background: #ffffff;
+  --background: #eaf3fc;
   --foreground: #171717;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
 }
 
 html {
@@ -26,10 +19,15 @@ body {
   flex-direction: column;
   color: var(--foreground);
   background: var(--background);
-  font-family: Arial, Helvetica, sans-serif;
+  /* Geist Sans is already loaded via layout.tsx (--font-geist-sans) for this exact purpose --
+     it was just never actually wired into the stylesheet, leaving the whole app on the system
+     Arial/Helvetica fallback instead of the cleaner typeface. */
+  font-family: var(--font-geist-sans), Arial, Helvetica, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  position: relative;
 }
+
 
 * {
   box-sizing: border-box;
@@ -42,12 +40,6 @@ a {
   text-decoration: none;
 }
 
-@media (prefers-color-scheme: dark) {
-  html {
-    color-scheme: dark;
-  }
-}
-
 /* --- Tech Rep Report Builder --- */
 
 .app-shell {
@@ -57,16 +49,45 @@ a {
 }
 
 .app-header {
-  padding: 10px 16px;
-  border-bottom: 1px solid #d0d0d0;
+  padding: 12px 18px;
+  border-bottom: 1px solid #0b3d91;
   display: flex;
   align-items: center;
   gap: 12px;
   flex-wrap: wrap;
+  background: rgba(255, 255, 255, 0.72);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  position: relative;
+  z-index: 1;
+  box-shadow: 0 4px 14px rgba(11, 61, 145, 0.12);
+}
+
+/* The footer reuses the .app-header class but sits below .app-body, outside the
+   sidebar's own box — so the sidebar/main-panel divider line stops short of the
+   page bottom unless the footer draws its own continuation of that same line. */
+footer.app-header {
+  position: relative;
+  /* Left of the sidebar/main-panel divider (319px) stays the page's light blue;
+     right of it (under the main panel) is frosted glass, matching the panel above it. */
+  background: linear-gradient(to right, transparent 0, transparent 319px, rgba(255, 255, 255, 0.72) 319px, rgba(255, 255, 255, 0.72) 100%);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  box-shadow: 0 -4px 14px rgba(11, 61, 145, 0.1);
+}
+
+footer.app-header::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 319px;
+  width: 1px;
+  background: #d5e1f2;
 }
 
 .app-header .job-path {
-  font-family: monospace;
+  font-family: var(--font-geist-mono), monospace;
   font-size: 12px;
   color: #555;
   flex: 1;
@@ -84,31 +105,105 @@ a {
 
 .sidebar {
   width: 320px;
-  border-right: 1px solid #d0d0d0;
-  overflow-y: auto;
   flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  /* Frosted glass over the page's light blue -- rows themselves stay transparent (no
+     background of their own) so this shows through them uniformly, keeping "the tabs are
+     light blue" true while still reading as its own distinct panel from the plain body. */
+  background: rgba(255, 255, 255, 0.3);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  /* No border-right here -- overflow-y:auto on .sidebar-scroll forces its overflow-x
+     to compute as "auto" too (CSS won't mix visible with non-visible per axis), which
+     clips 1px no matter what, so a border/overlay on this ancestor can never actually
+     reach the true edge for one row while the rest scrolls. Instead each row draws its
+     OWN right border below (see .section-item, .sidebar-logo-spacer) -- entirely inside
+     the scroller's own width, so nothing needs to spill past a clipped boundary, and
+     the active row can simply omit its own segment to "merge" into the white panel. */
+}
+
+/* The actual scroller. Kept separate from .sidebar itself so its OS scrollbar doesn't
+   eat into the 320px width and leave a gap between the active tab and the sidebar's
+   real right edge -- that gap was breaking the "selected tab merges into the white
+   main panel" effect. Scrollbar is hidden (scroll still works via wheel/trackpad/keys)
+   so the tab can use the full width right up to the divider line. */
+.sidebar-scroll {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  scrollbar-width: none; /* Firefox */
+}
+
+.sidebar-scroll::-webkit-scrollbar {
+  display: none; /* Chrome, Edge, Safari */
+}
+
+/* Fills whatever space is left below the last section tab and centers the
+   logo inside it, instead of guessing a fixed offset from the sidebar's
+   bottom edge — so it's always centered in that empty box regardless of
+   how many section tabs are above it. */
+.sidebar-logo-spacer {
+  flex: 1 1 auto;
+  min-height: 70px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding: 6px 6px 10px;
+  pointer-events: none;
+  border-right: 1px solid #d5e1f2;
+}
+
+.sidebar-logo-img {
+  max-width: 95%;
+  max-height: 95%;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  display: block;
 }
 
 .section-item {
   display: block;
   width: 100%;
   text-align: left;
-  padding: 10px 14px;
+  padding: 13px 16px 13px 13px;
   border: none;
-  border-bottom: 1px solid #eee;
+  /* A soft blue-grey hairline instead of the full-strength brand navy -- a heavy dark line
+     between every row read more like spreadsheet gridlines than a polished list. */
+  border-bottom: 1px solid #d5e1f2;
+  border-right: 1px solid #d5e1f2;
+  border-left: 3px solid transparent;
+  border-radius: 0;
   background: none;
+  box-shadow: none;
   color: #1a1a1a;
   cursor: pointer;
   font-size: 13px;
+  transition: background-color 0.15s ease, border-left-color 0.15s ease;
 }
 
 .section-item:hover {
-  background: rgba(11, 61, 145, 0.06);
+  background: #082c6b;
+  border-left-color: #0b3d91;
+}
+
+/* Title/subtitle are normally near-black/grey, which is hard to read once the navy
+   hover tint darkens the row -- flip them to white on hover. Skipped for the active
+   tab since its background stays white on hover, where white text would disappear. */
+.section-item:hover:not(.active) .title-row span:first-child,
+.section-item:hover:not(.active) .confidence-tag {
+  color: #ffffff;
 }
 
 .section-item.active {
-  background: rgba(11, 61, 145, 0.12);
+  background: #ffffff;
   font-weight: 600;
+  /* Drop this row's own right border (see .section-item) so the white tab reads as
+     physically connected to the white main panel next to it, like a real notebook-tab,
+     instead of interrupted by the divider line. */
+  border-right: none;
 }
 
 .section-item .title-row {
@@ -118,11 +213,16 @@ a {
   gap: 8px;
 }
 
+.section-item .title-row span:first-child {
+  font-weight: 700;
+  font-size: 15px;
+}
+
 .status-badge {
   font-size: 10px;
   font-weight: 700;
-  padding: 2px 6px;
-  border-radius: 4px;
+  padding: 3px 10px;
+  border-radius: 999px;
   text-transform: uppercase;
   white-space: nowrap;
 }
@@ -143,22 +243,35 @@ a {
 }
 
 .confidence-tag {
+  display: inline-block;
   font-size: 10px;
-  color: #777;
-  margin-top: 2px;
+  font-weight: 600;
+  color: #33507a;
+  background: #eaf2fc;
+  border-radius: 999px;
+  padding: 1px 8px;
+  margin-top: 5px;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.section-item:hover:not(.active) .confidence-tag {
+  background: rgba(255, 255, 255, 0.18);
 }
 
 .main-panel {
   flex: 1;
   overflow-y: auto;
   padding: 20px 28px;
+  background: #ffffff;
 }
 
 .section-reason {
   font-size: 13px;
-  color: #555;
-  background: #f7f7f7;
-  padding: 8px 12px;
+  color: #33507a;
+  background: #eaf2fc;
+  border: 1px solid #cfe0f5;
+  border-left: 3px solid #0b3d91;
+  padding: 8px 14px;
   border-radius: 6px;
   margin-bottom: 16px;
 }
@@ -169,14 +282,45 @@ a {
   margin-bottom: 16px;
 }
 
+/* Shared look for every text input/textarea in the app (Title/Cover fields, the
+   "Revise with instruction" box, the draft textarea) -- border/radius/hover/focus live
+   here once instead of duplicated per context, so hovering or focusing any of them
+   gives the same navy highlight instead of staying flat browser-default grey. */
+input[type="text"],
+textarea {
+  border: 1px solid #d5e1f2;
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-family: inherit;
+  font-size: 14px;
+  color: #1a1a1a;
+  background: #fbfdff;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, background-color 0.15s ease;
+}
+
+input[type="text"]::placeholder,
+textarea::placeholder {
+  color: #9aabc4;
+}
+
+input[type="text"]:hover,
+textarea:hover {
+  border-color: #8fb0dd;
+}
+
+input[type="text"]:focus,
+textarea:focus {
+  outline: none;
+  border-color: #0b3d91;
+  background: #ffffff;
+  box-shadow: 0 0 0 3px rgba(11, 61, 145, 0.15);
+}
+
 textarea.draft-textarea {
   width: 100%;
   min-height: 260px;
-  font-family: inherit;
   font-size: 14px;
   padding: 10px;
-  border: 1px solid #ccc;
-  border-radius: 6px;
 }
 
 .toolbar {
@@ -191,28 +335,63 @@ textarea.draft-textarea {
   flex: 1;
   min-width: 220px;
   padding: 8px 10px;
-  border: 1px solid #ccc;
-  border-radius: 6px;
 }
 
 button {
-  padding: 8px 14px;
-  border-radius: 6px;
+  appearance: none;
+  -webkit-appearance: none;
+  padding: 9px 16px;
+  border-radius: 7px;
   border: 1px solid #0b3d91;
   background: #0b3d91;
   color: white;
   cursor: pointer;
-  font-size: 13px;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  box-shadow: 0 1px 3px rgba(11, 61, 145, 0.25);
+  transition: background-color 0.15s ease, box-shadow 0.15s ease, transform 0.1s ease;
+}
+
+/* :not(.section-item) matters here: sidebar tabs are literal <button>s, and
+   button:hover:not(:disabled) would otherwise outrank .section-item:hover (an extra
+   :not() pseudo-class bumps its specificity above a plain class + :hover), silently
+   overriding the tab's own hover background with this dark navy fill. */
+button:hover:not(:disabled):not(.section-item) {
+  background: #082c6b;
+  box-shadow: 0 2px 6px rgba(11, 61, 145, 0.35);
+}
+
+/* A brief press-down on click -- tactile feedback that a flat hover-only button lacks. */
+button:active:not(:disabled):not(.section-item) {
+  transform: translateY(1px);
+  box-shadow: 0 1px 2px rgba(11, 61, 145, 0.3);
+}
+
+button:focus-visible {
+  outline: 2px solid #4f8cf0;
+  outline-offset: 2px;
 }
 
 button.secondary {
   background: white;
   color: #0b3d91;
+  box-shadow: none;
+}
+
+button.secondary:hover:not(:disabled) {
+  background: #eaf1fb;
+}
+
+button.secondary:active:not(:disabled) {
+  background: #d9e8fb;
 }
 
 button:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+  box-shadow: none;
 }
 
 button.generate-report {
@@ -220,6 +399,17 @@ button.generate-report {
   border-color: #1a7431;
   font-size: 15px;
   padding: 12px 24px;
+  box-shadow: 0 2px 5px rgba(26, 116, 49, 0.35);
+}
+
+button.generate-report:hover:not(:disabled) {
+  background: #145c27;
+  box-shadow: 0 3px 8px rgba(26, 116, 49, 0.45);
+}
+
+button.generate-report:active:not(:disabled) {
+  background: #0e4a1e;
+  box-shadow: 0 1px 3px rgba(26, 116, 49, 0.4);
 }
 
 .preview-table {
@@ -227,12 +417,19 @@ button.generate-report {
   width: 100%;
   font-size: 12px;
   margin-top: 10px;
+  background: #ffffff;
+  /* Sharp corners on purpose, not rounded like the cover table/folder list -- th is
+     position:sticky for tables tall enough to scroll (Wall Thickness runs 270+ rows), and an
+     overflow:hidden wrapper needed to clip rounded corners would break that stickiness. */
+  border: 1px solid #d5e1f2;
+  box-shadow: 0 2px 8px rgba(11, 61, 145, 0.06);
 }
 
 .preview-table th,
 .preview-table td {
-  border: 1px solid #ddd;
-  padding: 4px 8px;
+  border: 1px solid #d5e1f2;
+  padding: 6px 10px;
+  background: #ffffff;
 }
 
 .preview-table th {
@@ -242,41 +439,195 @@ button.generate-report {
   top: 0;
 }
 
+/* Faint zebra striping for readability across long tables (Wall Thickness runs 270+ rows). */
+.preview-table tbody tr:nth-child(even) td {
+  background: #f4f8fd;
+}
+
 .preview-table td.fail {
   color: #a4141a;
   font-weight: 700;
 }
 
+.preview-table th[data-col="Serial #"],
+.preview-table td[data-col="Serial #"],
+.preview-table th[data-col="APG #"],
+.preview-table td[data-col="APG #"] {
+  text-align: center;
+}
+
+/* Title/Cover's label+value form -- a two-column table, not a data grid, so it gets its own
+   look: no busy per-cell gridlines (just a soft row divider), rounded container, and the input
+   sitting flush/borderless inside its own cell instead of a boxed input inside a bordered cell. */
+.cover-table-wrap {
+  display: inline-block;
+  border: 1px solid #d5e1f2;
+  border-radius: 10px;
+  overflow: hidden;
+  box-shadow: 0 4px 16px rgba(11, 61, 145, 0.08);
+}
+
+.cover-table {
+  margin-top: 0;
+}
+
+.cover-table th,
+.cover-table td {
+  border: none;
+  border-bottom: 1px solid #d5e1f2;
+  padding: 10px 18px;
+}
+
+.cover-table tr:last-child th,
+.cover-table tr:last-child td {
+  border-bottom: none;
+}
+
+.cover-table th {
+  position: static;
+  font-weight: 700;
+}
+
+.cover-table input[type="text"] {
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  padding: 2px 0;
+}
+
+.cover-table input[type="text"]:hover {
+  border: none;
+}
+
+.cover-table input[type="text"]:focus {
+  background: #eaf2fc;
+  border-radius: 6px;
+  box-shadow: none;
+  padding: 2px 8px;
+  margin: 0 -8px;
+}
+
+/* Side-by-side mini-tables for long, simple lists (see TablePreview's columnBlocks) --
+   narrower per-block table so a long list fits several columns across instead of one
+   tall single column, matching how the same table reflows in the generated PDF. */
+.table-columns {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+}
+
+.table-columns .table-block {
+  width: auto;
+  flex: 1 1 0;
+  font-size: 11px;
+}
+
+.table-columns .table-block th,
+.table-columns .table-block td {
+  padding: 3px 6px;
+}
+
+/* Source form's own Customer/Date/Page/etc. header block, matching the same 3-per-row grid the
+   original form (e.g. DS-0554) prints above its table. */
+.form-header-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  border: 1px solid #000;
+  margin-top: 10px;
+  background: #ffffff;
+}
+
+.form-header-cell {
+  border: 1px solid #000;
+  padding: 4px 8px;
+  font-size: 12px;
+}
+
+.form-header-label {
+  font-weight: 700;
+  margin-right: 4px;
+}
+
+/* The real form's blank "NOTES:" box under the table. */
+.form-notes-box {
+  border: 1px solid #000;
+  min-height: 70px;
+  margin-top: 10px;
+  padding: 6px 8px;
+  background: #ffffff;
+}
+
+.form-notes-label {
+  font-weight: 700;
+  text-decoration: underline;
+  font-size: 12px;
+}
+
 .photo-grid {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
-  margin-top: 12px;
+  gap: 16px;
+  margin-top: 14px;
 }
 
 .photo-tile {
-  width: 160px;
+  position: relative;
+  width: 180px;
   border: 2px solid transparent;
-  border-radius: 6px;
+  border-radius: 10px;
   overflow: hidden;
   cursor: pointer;
+  background: #ffffff;
+  box-shadow: 0 2px 8px rgba(11, 61, 145, 0.12);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
+}
+
+.photo-tile:hover:not(.selected) {
+  border-color: #0b3d91;
+  box-shadow: 0 8px 20px rgba(11, 61, 145, 0.25);
+  transform: translateY(-2px);
 }
 
 .photo-tile.selected {
   border-color: #1a7431;
+  box-shadow: 0 4px 16px rgba(26, 116, 49, 0.3);
+}
+
+/* Checkmark badge instead of relying on the border color alone to signal "selected". */
+.photo-tile.selected::after {
+  content: "✓";
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 20px;
+  height: 20px;
+  border-radius: 999px;
+  background: #1a7431;
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
 }
 
 .photo-tile img {
   width: 100%;
-  height: 110px;
+  height: 130px;
   object-fit: cover;
   display: block;
 }
 
 .photo-tile .caption {
   font-size: 10px;
-  padding: 4px;
-  word-break: break-all;
+  color: #33507a;
+  background: #f4f8fd;
+  padding: 5px 8px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .folder-picker {
@@ -285,27 +636,174 @@ button.generate-report {
   margin: 0 auto;
 }
 
+/* Icon + wordmark lockup, styled like a real product logo rather than a plain page heading --
+   the mark sized to the text's cap-height, tight letter-spacing, brand navy. */
+.app-logo {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 10px;
+}
+
+.app-logo-icon {
+  height: 50px;
+  width: auto;
+  flex-shrink: 0;
+  filter: drop-shadow(0 3px 6px rgba(11, 61, 145, 0.3));
+}
+
+.app-logo h1 {
+  margin: 0;
+  font-size: 34px;
+  font-weight: 800;
+  letter-spacing: -0.025em;
+  color: #0b3d91;
+  text-shadow: 0 1px 2px rgba(11, 61, 145, 0.12);
+}
+
+/* Small signature accent under the wordmark, echoing the blue-to-gray bar under the
+   letterhead on every page of the generated PDF report. */
+.app-logo-bar {
+  height: 3px;
+  width: 130px;
+  margin: 0 0 20px;
+  border-radius: 2px;
+  background: linear-gradient(to right, #0b3d91, #6fa3e0);
+}
+
+.folder-picker-subtitle {
+  margin: 0 0 20px;
+  color: #33507a;
+  font-size: 14px;
+}
+
+/* Frosted-glass panel holding the interactive part of the screen (path, buttons, list) --
+   floats it off the gradient/watermark backdrop instead of leaving those controls to sit
+   directly on it. */
+.folder-picker-card {
+  background: rgba(255, 255, 255, 0.72);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border: 1px solid rgba(255, 255, 255, 0.7);
+  border-radius: 14px;
+  padding: 24px;
+  box-shadow: 0 20px 50px rgba(3, 12, 30, 0.2);
+}
+
+.folder-picker-error {
+  margin: 0 0 12px;
+}
+
+/* Path shown as a pill/badge instead of raw monospace text sitting loose on the panel. */
+.folder-picker-card .job-path {
+  display: inline-block;
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 12px;
+  color: #0b3d91;
+  background: #eaf2fc;
+  border: 1px solid #cfe0f5;
+  border-radius: 999px;
+  padding: 6px 14px;
+  margin: 0;
+}
+
+/* Diagonal brand-blue gradient behind the folder-selection screen -- sits behind the logo
+   watermark (z-index -1, below) so the two layer cleanly: gradient, then logo, then content. */
+.folder-picker::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  background: linear-gradient(135deg, #eaf3fc 0%, #cfe4fb 45%, #9dc2ec 75%, #6fa3e0 100%);
+  z-index: -2;
+  pointer-events: none;
+}
+
+/* Mark-only logo watermark behind the folder-selection screen specifically -- fixed to the
+   viewport (not sized to .folder-picker's own box, which is only as tall as its content) so it
+   covers the whole visible page behind it, and only exists while this screen is in the DOM. */
+.folder-picker::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  background: url("/apg-mark-transparent.png") bottom right / min(45vw, 520px) auto no-repeat;
+  opacity: 0.3;
+  pointer-events: none;
+  z-index: -1;
+}
+
 .folder-list {
-  border: 1px solid #ccc;
-  border-radius: 6px;
-  max-height: 340px;
+  border: 2px solid #0b3d91;
+  border-radius: 4px;
+  max-height: 460px;
   overflow-y: auto;
-  margin-top: 12px;
+  margin-top: 4px;
+  background: #ffffff;
+  box-shadow: 0 4px 14px rgba(11, 61, 145, 0.18);
 }
 
 .folder-list button {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 8px;
   width: 100%;
   text-align: left;
-  background: none;
+  background: #ffffff;
   color: inherit;
+  font-weight: 700;
+  font-size: 15px;
   border: none;
-  border-bottom: 1px solid #eee;
-  padding: 8px 12px;
+  padding: 14px 18px;
+  margin-bottom: 3px;
+  /* Replaces the old flat border-bottom divider -- a tight downward shadow that reads as each
+     row sitting slightly above the next, instead of just a hairline between them. */
+  box-shadow: 0 3px 4px -2px rgba(11, 61, 145, 0.35);
+  transition: background-color 0.15s ease, color 0.15s ease;
 }
 
-.folder-list button:hover {
-  background: rgba(11, 61, 145, 0.08);
+.folder-list button:last-child {
+  margin-bottom: 0;
+  box-shadow: none;
+}
+
+.folder-list button:hover:not(:disabled) {
+  background: #082c6b;
+  color: #ffffff;
+}
+
+.folder-icon {
+  color: #0b3d91;
+  flex-shrink: 0;
+}
+
+.folder-list button:hover:not(:disabled) .folder-icon {
+  color: #ffffff;
+}
+
+.folder-list-loading,
+.folder-list-empty {
+  margin-top: 4px;
+  padding: 28px 18px;
+  text-align: center;
+  color: #6a7fa3;
+  font-size: 14px;
+  border: 2px solid #cfe0f5;
+  border-radius: 4px;
+  background: #ffffff;
+}
+
+@keyframes folder-list-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.folder-list-enter {
+  animation: folder-list-fade-in 0.2s ease;
 }
 
 .file-count {

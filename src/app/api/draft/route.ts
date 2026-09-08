@@ -59,7 +59,7 @@ export async function POST(request: NextRequest) {
       case "photoSet": {
         const result = await selectBestPhotos(section.matchedFiles);
         content = result.raw;
-        selectedPhotoPaths = result.selections.map((s) => s.relativePath);
+        selectedPhotoPaths = result.includedPaths;
         break;
       }
       default:
@@ -69,6 +69,7 @@ export async function POST(request: NextRequest) {
     const newState = await updateSectionState(jobRoot, sectionId, {
       content,
       selectedPhotoPaths,
+      draftError: undefined,
       lastGeneratedAt: new Date().toISOString(),
     });
 

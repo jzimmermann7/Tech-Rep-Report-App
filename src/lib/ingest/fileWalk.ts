@@ -30,7 +30,24 @@ export async function walkJobFolder(jobRoot: string): Promise<JobFile[]> {
         await recurse(absolutePath);
         continue;
       }
-      if (!entry.isFile()) continue;
+      if (!entry.isFile()) {
+        // Some network/cloud-synced drives (OneDrive placeholders, certain mapped/network
+        // shares) report every plain file's dirent as a symlink rather than a regular file,
+        // so entry.isFile() alone silently drops the entire job folder's contents. Fall back
+        // to a real stat() (which follows the reparse point/symlink to what it actually is)
+        // before giving up on it.
+        let stat;
+        try {
+          stat = await fs.stat(absolutePath);
+        } catch {
+          continue; // broken link, permission error, etc.
+        }
+        if (stat.isDirectory()) {
+          await recurse(absolutePath);
+          continue;
+        }
+        if (!stat.isFile()) continue;
+      }
       const lowerName = entry.name.toLowerCase();
       if (SKIP_FILE_NAMES.has(lowerName)) continue;
       const ext = path.extname(entry.name).toLowerCase();

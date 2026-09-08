@@ -13,9 +13,13 @@ import type { ParsedTable } from "./types";
  * Columns B-G are nominal-with-tolerance dimensions; columns H-I are direct Min/Max bounds for
  * squealer tip thickness. "MM" in a data cell means not measured.
  */
+/** Exported so scanJobFolder.ts's Excel-COM PDF fallback can select the same sheet this parser
+ * would, when it needs to render (not just read) this workbook -- see PRINT_PDF_SECTIONS. */
+export const HEIGHT_DIM_FORM_SHEET_PATTERN = /1st stg heights|ds-?0004/i;
+
 export async function parseHeightDimForm(absolutePath: string): Promise<ParsedTable | null> {
   const workbook = await loadWorkbook(absolutePath);
-  const sheet = workbook.worksheets.find((s) => /1st stg heights|ds-?0004/i.test(s.name));
+  const sheet = workbook.worksheets.find((s) => HEIGHT_DIM_FORM_SHEET_PATTERN.test(s.name));
   if (!sheet) return null;
 
   const toleranceMatch = cellText(sheet.getRow(5).getCell(1)).match(/\+\/-\s*([\d.]+)/);
