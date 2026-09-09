@@ -47,7 +47,12 @@ export async function generateReportPdf(jobRoot: string): Promise<{ buffer: Buff
   const sectionsById = new Map(scan.sections.map((s) => [s.id, s]));
   for (const id of ATTACH_AS_IS_ORDER) {
     const section = sectionsById.get(id);
-    const file = section?.matchedFiles[0];
+    if (!section) continue;
+    // Multiple files can match a section's naming pattern; the review screen lets the tech rep
+    // pick which one is actually the real exhibit (persisted as selectedAttachmentPath). Honor
+    // that pick when present, falling back to the auto-selected first match otherwise.
+    const selectedPath = state.sections[id]?.selectedAttachmentPath;
+    const file = (selectedPath && section.matchedFiles.find((f) => f.relativePath === selectedPath)) || section.matchedFiles[0];
     if (!file) continue;
     if (path.extname(file.absolutePath).toLowerCase() !== ".pdf") {
       skippedAttachments.push(file.relativePath);

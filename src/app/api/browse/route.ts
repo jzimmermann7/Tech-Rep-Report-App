@@ -9,10 +9,24 @@ export async function GET(request: NextRequest) {
 
   try {
     const entries = await fs.readdir(dir, { withFileTypes: true });
-    const folders = entries
-      .filter((e) => e.isDirectory() && !e.name.startsWith("."))
-      .map((e) => e.name)
-      .sort((a, b) => a.localeCompare(b));
+    const names = await Promise.all(
+      entries.map(async (e) => {
+        if (e.name.startsWith(".")) return null;
+        if (e.isDirectory()) return e.name;
+        // Some network/cloud-synced drives (OneDrive placeholders especially) report a real
+        // subfolder's dirent as a symlink rather than a directory, so e.isDirectory() alone
+        // silently drops it from the picker -- fall back to a real stat() (which follows the
+        // reparse point to what it actually is) before ruling it out.
+        if (e.isFile()) return null;
+        try {
+          const stat = await fs.stat(path.join(dir, e.name));
+          return stat.isDirectory() ? e.name : null;
+        } catch {
+          return null; // broken link, permission error, etc.
+        }
+      })
+    );
+    const folders = names.filter((n): n is string => n !== null).sort((a, b) => a.localeCompare(b));
     return NextResponse.json({ dir, parent: path.dirname(dir), folders });
   } catch (err) {
     return NextResponse.json({ error: err instanceof Error ? err.message : "Could not read directory" }, { status: 400 });

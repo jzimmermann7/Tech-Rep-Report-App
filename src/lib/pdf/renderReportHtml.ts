@@ -278,8 +278,13 @@ export async function renderReportSegments(scan: JobScanResult, state: JobState)
   const coverRows = COVER_FIELD_ORDER.map(({ key, label }) => {
     const raw = (coverOverrides[key as string] ?? (scan.metadata[key] as string) ?? "").toString();
     const value = key === "date" ? raw.split("T")[0] : raw;
-    return `<div class="cover-row"><span class="cover-label">${escapeHtml(label)}:</span><span class="cover-value">${escapeHtml(value)}</span></div>`;
-  }).join("");
+    return { label, value };
+  })
+    // A field left blank on the review screen prints as a label with nothing after it, which
+    // reads as a missing piece of the report -- drop any row like that instead, for every field.
+    .filter(({ value }) => value.trim() !== "")
+    .map(({ label, value }) => `<div class="cover-row"><span class="cover-label">${escapeHtml(label)}:</span><span class="cover-value">${escapeHtml(value)}</span></div>`)
+    .join("");
 
   bodyParts.push(`
     <section class="cover">

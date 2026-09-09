@@ -60,8 +60,8 @@ const BLANK_ENRICHMENT = {
   material: "",
   coating: "",
   priorRepair: "",
-  hours: "Not Provided",
-  starts: "Not Provided",
+  hours: "",
+  starts: "",
   boxes: "",
 };
 

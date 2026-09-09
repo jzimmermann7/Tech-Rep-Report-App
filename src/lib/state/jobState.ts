@@ -20,6 +20,10 @@ export interface SectionState {
    * as an explicit "needs human review" flag instead of silently leaving the section blank.
    * Cleared as soon as content is successfully generated or edited. */
   draftError?: string;
+  /** For attach-as-is sections (chem test, crack map, met report) where more than one file
+   * matched the naming pattern: the tech rep's own pick of which one is actually the real
+   * exhibit, by relativePath. Overrides the auto-picked candidate for report generation. */
+  selectedAttachmentPath?: string;
 }
 
 export interface JobState {

@@ -10,9 +10,12 @@ type ScanResponse = Omit<JobScanResult, "sections"> & { sections: SectionWithSta
 
 function StatusBadge({ status, acknowledged }: { status: string; acknowledged?: boolean }) {
   // "ready" means the data/draft is there, not that a person has looked at it — don't let that
-  // read as done until the tech rep actually clicks "Tech Rep Reviewed".
-  const label = status === "ready" ? (acknowledged ? "Ready" : "Ready for Review") : status.replace("-", " ");
-  return <span className={`status-badge ${status}`}>{label}</span>;
+  // read as done until the tech rep actually clicks "Tech Rep Reviewed". But once they do,
+  // that click is the tech rep vouching for the section themselves -- show it as Ready (green)
+  // even if it started out missing or needs-attention, rather than still flagging it red/yellow.
+  const effectiveStatus = acknowledged ? "ready" : status;
+  const label = acknowledged ? "Ready" : status === "ready" ? "Ready for Review" : status.replace("-", " ");
+  return <span className={`status-badge ${effectiveStatus}`}>{label}</span>;
 }
 
 function FolderIcon() {
@@ -108,14 +111,72 @@ function chunkRows<T>(rows: T[], numChunks: number): T[][] {
   return chunks;
 }
 
-function TablePreview({ section }: { section: SectionWithState }) {
+// Sections where the tech rep can manually attach a file the automatic matching didn't find --
+// see ManualAttachmentUpload and scanJobFolder.ts's manualAttachmentsFor. Deliberately not every
+// file-backed section: the ones left out either don't make sense to hand-attach (Photo Set is a
+// multi-file selection, not one exhibit) or the request that added this was scoped to just these
+// five.
+const MANUAL_ATTACHMENT_SECTIONS = new Set(["chemTest", "heightDimForm", "dovetailDimension", "wallThickness", "metallurgicalReport"]);
+
+function ManualAttachmentUpload({ jobRoot, sectionId, onUploaded }: { jobRoot: string; sectionId: string; onUploaded: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const inputId = `manual-attach-${sectionId}`;
+
+  const handleFile = async (file: File) => {
+    setBusy(true);
+    try {
+      const form = new FormData();
+      form.append("jobRoot", jobRoot);
+      form.append("sectionId", sectionId);
+      form.append("file", file);
+      const res = await fetch("/api/manual-attachment", { method: "POST", body: form });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Upload failed");
+      // The file now sits inside the job folder itself (see manualAttachmentsFor's convention),
+      // so a full rescan is what actually picks it up -- there's no lighter-weight update that
+      // would parse it, resolve a print-PDF pairing, etc.
+      onUploaded();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Upload failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="manual-attachment">
+      <input
+        id={inputId}
+        type="file"
+        className="manual-attachment-input"
+        disabled={busy}
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          e.target.value = "";
+          if (file) handleFile(file);
+        }}
+      />
+      <label htmlFor={inputId} className={`manual-attachment-btn ${busy ? "busy" : ""}`}>
+        📎 {busy ? "Uploading…" : "Insert file manually"}
+      </label>
+      <p className="manual-attachment-hint">Didn&apos;t find it automatically? If you have this file somewhere else on your computer, attach it here.</p>
+    </div>
+  );
+}
+
+function TablePreview({ jobRoot, section, onRefresh }: { jobRoot: string; section: SectionWithState; onRefresh: () => void }) {
   const table = section.parsedTable;
   if (!table) {
     // No data spreadsheet to show as a table, but the completed print-ready PDF was found (see
     // scanJobFolder.ts's PRINT_PDF_SECTIONS) and is what the report actually uses -- the
     // statusReason above this already explains that, so don't also claim there's "no data".
     if (section.printPdfFile) return null;
-    return <p className="section-reason">No table data available.</p>;
+    return (
+      <div>
+        <p className="section-reason">No table data available.</p>
+        {MANUAL_ATTACHMENT_SECTIONS.has(section.id) && <ManualAttachmentUpload jobRoot={jobRoot} sectionId={section.id} onUploaded={onRefresh} />}
+      </div>
+    );
   }
 
   // Serial Number List is a long, simple 3-column list (matching the real DS-0554 form, which
@@ -285,9 +346,14 @@ function NarrativeEditor({
   );
 }
 
+const PHOTOS_PER_PAGE = 60;
+
 function PhotoSetEditor({ jobRoot, section }: { jobRoot: string; section: SectionWithState }) {
   // Keyed by section.id in SectionPanel below, so a section switch remounts this fresh.
   const [selected, setSelected] = useState<string[]>(section.state.selectedPhotoPaths ?? []);
+  const [filter, setFilter] = useState<"all" | "selected">("all");
+  const [page, setPage] = useState(0);
+  const [showAll, setShowAll] = useState(false);
 
   const toggle = async (relativePath: string) => {
     const next = selected.includes(relativePath) ? selected.filter((p) => p !== relativePath) : [...selected, relativePath];
@@ -299,7 +365,19 @@ function PhotoSetEditor({ jobRoot, section }: { jobRoot: string; section: Sectio
     });
   };
 
-  const shown = section.matchedFiles.slice(0, 60);
+  const changeFilter = (next: "all" | "selected") => {
+    setFilter(next);
+    setPage(0);
+  };
+
+  // "selected" is whatever's currently checked -- the AI's initial pick, plus any manual
+  // adjustments the tech rep has made since -- so this filter always reflects the live set,
+  // not a frozen snapshot of the original auto-selection.
+  const filtered = filter === "selected" ? section.matchedFiles.filter((f) => selected.includes(f.relativePath)) : section.matchedFiles;
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PHOTOS_PER_PAGE));
+  const clampedPage = Math.min(page, totalPages - 1);
+  const shown = showAll ? filtered : filtered.slice(clampedPage * PHOTOS_PER_PAGE, clampedPage * PHOTOS_PER_PAGE + PHOTOS_PER_PAGE);
 
   return (
     <div>
@@ -313,30 +391,129 @@ function PhotoSetEditor({ jobRoot, section }: { jobRoot: string; section: Sectio
         Incoming/NDT photos are preselected automatically, minus duplicates and unusable shots — click any photo to toggle it in/out of the final selection.{" "}
         {selected.length} selected.
       </p>
-      <div className="photo-grid">
-        {shown.map((f) => (
-          <div key={f.relativePath} className={`photo-tile ${selected.includes(f.relativePath) ? "selected" : ""}`} onClick={() => toggle(f.relativePath)}>
-            <img src={`/api/photo-file?jobRoot=${encodeURIComponent(jobRoot)}&path=${encodeURIComponent(f.relativePath)}`} alt={f.relativePath} />
-            <div className="caption">{f.relativePath.split("/").pop()}</div>
+
+      <div className="photo-filter-tabs">
+        <button className={`photo-filter-tab ${filter === "selected" ? "active" : ""}`} onClick={() => changeFilter("selected")}>
+          Selected ({selected.length})
+        </button>
+        <button className={`photo-filter-tab ${filter === "all" ? "active" : ""}`} onClick={() => changeFilter("all")}>
+          All ({section.matchedFiles.length})
+        </button>
+      </div>
+
+      {filtered.length === 0 ? (
+        <p className="file-count">No photos in this view yet — toggle some on from &quot;All&quot;.</p>
+      ) : (
+        <div className="photo-grid">
+          {shown.map((f) => (
+            <div key={f.relativePath} className={`photo-tile ${selected.includes(f.relativePath) ? "selected" : ""}`} onClick={() => toggle(f.relativePath)}>
+              <img
+                src={`/api/photo-file?jobRoot=${encodeURIComponent(jobRoot)}&path=${encodeURIComponent(f.relativePath)}`}
+                alt={f.relativePath}
+                loading="lazy"
+              />
+              <div className="caption">{f.relativePath.split("/").pop()}</div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {filtered.length > PHOTOS_PER_PAGE &&
+        (showAll ? (
+          <div className="photo-pagination">
+            <span className="photo-page-label">Showing all {filtered.length} photos.</span>
+            <button
+              className="photo-page-btn"
+              onClick={() => {
+                setShowAll(false);
+                setPage(0);
+              }}
+            >
+              Paginate instead
+            </button>
+          </div>
+        ) : (
+          <div className="photo-pagination">
+            <button className="photo-page-btn" onClick={() => setPage((p) => Math.max(0, p - 1))} disabled={clampedPage === 0}>
+              ← Prev
+            </button>
+            <span className="photo-page-label">
+              Page {clampedPage + 1} of {totalPages}
+            </span>
+            <button className="photo-page-btn" onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))} disabled={clampedPage >= totalPages - 1}>
+              Next →
+            </button>
+            <button className="photo-page-btn" onClick={() => setShowAll(true)}>
+              Show all {filtered.length}
+            </button>
           </div>
         ))}
-      </div>
-      {section.matchedFiles.length > shown.length && <p className="file-count">...and {section.matchedFiles.length - shown.length} more not shown.</p>}
     </div>
   );
 }
 
-function AttachAsIs({ section }: { section: SectionWithState }) {
-  const file = section.matchedFiles[0];
-  return (
-    <div className="section-reason">
-      {file ? (
+function AttachAsIs({ jobRoot, section, onRefresh }: { jobRoot: string; section: SectionWithState; onRefresh: () => void }) {
+  const candidates = section.matchedFiles;
+  // Keyed by section.id in SectionPanel above, so this remounts (and re-derives its initial
+  // selection from `section`) whenever the reviewer switches sections — no sync effect needed.
+  const [selected, setSelected] = useState<string | undefined>(section.state.selectedAttachmentPath ?? candidates[0]?.relativePath);
+  const [hovered, setHovered] = useState<string | undefined>(undefined);
+
+  const choose = async (relativePath: string) => {
+    setSelected(relativePath);
+    await fetch("/api/section-state", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ jobRoot, sectionId: section.id, patch: { selectedAttachmentPath: relativePath } }),
+    });
+  };
+
+  const fileUrl = (relativePath: string) => `/api/photo-file?jobRoot=${encodeURIComponent(jobRoot)}&path=${encodeURIComponent(relativePath)}`;
+
+  if (candidates.length === 0) {
+    return (
+      <div>
+        <p className="section-reason">No file found — this exhibit will be missing from the generated report unless you add one to the job folder.</p>
+        {MANUAL_ATTACHMENT_SECTIONS.has(section.id) && <ManualAttachmentUpload jobRoot={jobRoot} sectionId={section.id} onUploaded={onRefresh} />}
+      </div>
+    );
+  }
+
+  if (candidates.length === 1) {
+    return (
+      <div className="section-reason">
         <p>
-          Attached as-is: <strong>{file.relativePath}</strong>
+          Attached as-is: <strong>{candidates[0].relativePath}</strong>
         </p>
-      ) : (
-        <p>No file found — this exhibit will be missing from the generated report unless you add one to the job folder.</p>
-      )}
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <p className="section-reason">
+        {candidates.length} files matched this section&apos;s naming pattern — pick which one is actually the real exhibit. Your pick is what
+        gets attached to the generated report. Hover a file to preview it.
+      </p>
+      <div className="attachment-picker" onMouseLeave={() => setHovered(undefined)}>
+        <div className="attachment-candidates">
+          {candidates.map((f) => (
+            <button
+              key={f.relativePath}
+              className={`attachment-candidate ${selected === f.relativePath ? "selected" : ""}`}
+              onClick={() => choose(f.relativePath)}
+              onMouseEnter={() => setHovered(f.relativePath)}
+            >
+              {f.relativePath}
+            </button>
+          ))}
+        </div>
+        {hovered && (
+          <div className="attachment-preview">
+            <iframe key={hovered} src={fileUrl(hovered)} title={hovered} />
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -422,10 +599,18 @@ function SectionPanel({
       <p className="section-reason">{section.statusReason}</p>
       {section.confidenceNote && <p className="confidence-note">{section.confidenceNote}</p>}
 
-      {section.generation === "llm-narrative" && <NarrativeEditor key={section.id} jobRoot={jobRoot} section={section} onUpdated={onRefresh} />}
-      {section.generation === "table-from-source" && <TablePreview section={section} />}
+      {/* Keyed on lastGeneratedAt too, not just section.id -- a Rescan while this section is
+          already open re-runs autoDraftJob in the background and can fill in a draft that was
+          previously empty (e.g. a source file that wasn't found before now is). Without this,
+          the editor's local `draft` state was set once at mount and never picked up content
+          that appeared behind it, so the box kept showing "no draft yet" until the reviewer
+          clicked to a different section and back. */}
+      {section.generation === "llm-narrative" && (
+        <NarrativeEditor key={`${section.id}-${section.state.lastGeneratedAt ?? ""}`} jobRoot={jobRoot} section={section} onUpdated={onRefresh} />
+      )}
+      {section.generation === "table-from-source" && <TablePreview key={section.id} jobRoot={jobRoot} section={section} onRefresh={onRefresh} />}
       {section.generation === "llm-vision-select" && <PhotoSetEditor key={section.id} jobRoot={jobRoot} section={section} />}
-      {section.generation === "attach-as-is" && <AttachAsIs section={section} />}
+      {section.generation === "attach-as-is" && <AttachAsIs key={section.id} jobRoot={jobRoot} section={section} onRefresh={onRefresh} />}
       {section.generation === "template" && <CoverEditor key={section.id} jobRoot={jobRoot} section={section} metadata={metadata} />}
     </div>
   );

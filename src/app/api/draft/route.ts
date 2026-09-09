@@ -25,7 +25,10 @@ export async function POST(request: NextRequest) {
 
     switch (sectionId) {
       case "fpiVisual": {
-        if (!section.parsedRouter) return NextResponse.json({ error: "No router data available" }, { status: 400 });
+        // Unlike recommendedRepairs below, this section still has something honest to say from
+        // job metadata + crack-map presence alone when there's no router file -- see
+        // buildFpiVisualDraft/draftFpiVisual -- so a missing router no longer blocks drafting or
+        // revising this section outright.
         const crackMapAvailable = bySectionId.get("crackMap")?.status !== "missing";
         content = await draftFpiVisual(section.parsedRouter, ctx, crackMapAvailable);
         break;

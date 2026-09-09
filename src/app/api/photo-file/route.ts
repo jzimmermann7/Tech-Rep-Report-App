@@ -6,6 +6,7 @@ const MIME: Record<string, string> = {
   ".jpg": "image/jpeg",
   ".jpeg": "image/jpeg",
   ".png": "image/png",
+  ".pdf": "application/pdf",
 };
 
 export async function GET(request: NextRequest) {

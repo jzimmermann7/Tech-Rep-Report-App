@@ -38,7 +38,7 @@ export const iaReportTemplate: ReportTemplate = {
       generation: "llm-narrative",
       automationConfidence: "high",
       confidenceNote:
-        "Built directly from the router data — no AI call at all, so it never depends on an API key. Procedure/form numbers are pulled straight out of the router's own note text. The router's FPI note is procedural (what to inspect), never the actual zone-by-zone findings — those live only in the crack map, so the draft never tries to derive them: it defers to the crack map as its own exhibit when one's found, and explicitly states when findings aren't available rather than inventing them.",
+        "Built directly from the router data — no AI call at all, so it never depends on an API key. Procedure/form numbers are pulled straight out of the router's own note text. The router's FPI note is procedural (what to inspect), never the actual zone-by-zone findings — those live only in the crack map, so the draft never tries to derive them: it defers to the crack map as its own exhibit when one's found, and explicitly states when findings aren't available rather than inventing them. Still drafts a scope + Crack-Map-pointer skeleton from job metadata alone when no router file is found, rather than leaving this section fully blank — just without the procedure/form-number clause, which is called out for the tech rep to fill in.",
     },
     {
       id: "dimensionalSummary",
