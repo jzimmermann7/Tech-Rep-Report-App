@@ -246,19 +246,31 @@ function quantityPhrase(qty: string | undefined): string {
  * The one thing this deliberately never does — same as the AI-drafted version before it — is
  * invent zone-by-zone findings (Tips, Airfoil, Platform, ...); that detail only exists on the
  * hand-marked Crack Map, which no amount of code or AI can read on its own.
+ *
+ * `router` is optional: some jobs genuinely have no "IA Router" file on hand (renamed, not yet
+ * uploaded, one-off job structure). Rather than leaving the section fully blank in that case, this
+ * still drafts the scope/Crack-Map-pointer skeleton from job metadata alone -- just without the
+ * procedure/form-number clause, which only the router's note text can supply. A tech rep reviewing
+ * a real draft with an honest gap is a better starting point than an empty textbox.
  */
-export function buildFpiVisualDraft(router: ParsedRouter, ctx: DraftContext, crackMapAvailable: boolean): string {
-  const fpiOps = router.operations.filter((o) => o.active && /NDT|FPI|penetrant/i.test(o.label));
-  const combinedNotes = fpiOps.map((o) => o.note).join("\n");
-  const procedureNumbers = extractProcedureNumbers(combinedNotes);
-  const formNumber = extractFormNumber(combinedNotes);
-
-  const scopeClause = procedureNumbers.length > 0 ? ` per APG procedure document${procedureNumbers.length > 1 ? "s" : ""} ${listJoin(procedureNumbers)}` : "";
+export function buildFpiVisualDraft(router: ParsedRouter | undefined, ctx: DraftContext, crackMapAvailable: boolean): string {
+  let scopeClause = "";
+  let formNumber: string | null = null;
+  if (router) {
+    const fpiOps = router.operations.filter((o) => o.active && /NDT|FPI|penetrant/i.test(o.label));
+    const combinedNotes = fpiOps.map((o) => o.note).join("\n");
+    const procedureNumbers = extractProcedureNumbers(combinedNotes);
+    formNumber = extractFormNumber(combinedNotes);
+    scopeClause = procedureNumbers.length > 0 ? ` per APG procedure document${procedureNumbers.length > 1 ? "s" : ""} ${listJoin(procedureNumbers)}` : "";
+  }
 
   const lines: string[] = [];
   lines.push("FPI & Visual Inspection:");
   lines.push(`- Performed on all ${quantityPhrase(ctx.metadata.quantity)} buckets${scopeClause}.`);
   lines.push("- Representative photographs were taken of typical indications.");
+  if (!router) {
+    lines.push("- No router file was found for this job — confirm the procedure/work-instruction number(s) used and add them here.");
+  }
   lines.push("");
   lines.push("Findings:");
   lines.push(
@@ -272,17 +284,20 @@ export function buildFpiVisualDraft(router: ParsedRouter, ctx: DraftContext, cra
   return lines.join("\n");
 }
 
-export async function draftFpiVisual(router: ParsedRouter, ctx: DraftContext, crackMapAvailable: boolean): Promise<string> {
-  const fpiOps = router.operations.filter((o) => o.active && /NDT|FPI|penetrant/i.test(o.label));
+export async function draftFpiVisual(router: ParsedRouter | undefined, ctx: DraftContext, crackMapAvailable: boolean): Promise<string> {
+  const fpiOps = router?.operations.filter((o) => o.active && /NDT|FPI|penetrant/i.test(o.label)) ?? [];
   const fpiOpsSummary = fpiOps.map((o) => `- [${o.sequence}] ${o.label}${o.note ? `: ${o.note}` : ""}`).join("\n");
   const prompt = withInstructionSuffix(
     `Draft the "FPI & Visual Inspection Summary" section for job #${ctx.metadata.jobNumber} (${ctx.metadata.customer}, ${ctx.metadata.part}, qty ${ctx.metadata.quantity}).
 
-Here are the active FPI/visual-inspection router operations for this job:
-${fpiOpsSummary || "(none found)"}
+${
+  router
+    ? `Here are the active FPI/visual-inspection router operations for this job:\n${fpiOpsSummary || "(none found)"}`
+    : "No router file was found for this job, so there is no procedural router text to draw scope/procedure-number detail from — state the inspection was performed on all buckets and leave the specific procedure/work-instruction number as a bracketed placeholder for the tech rep to fill in, rather than inventing one."
+}
 
-APG's real report structures this section as one subheading per inspection zone (Tips, Airfoil, Platform, LE Angel Wing, TE Angel Wing, CC & CV Platform Shank, Side Shank/Pin Slots, Root Serrations), each with a bullet or two of that zone's findings. You do NOT have zone-level finding data here — only the procedural router text above — so do not invent zone bullets with counts or defect types. Instead, use exactly two subheadings:
-- "FPI & Visual Inspection:" with bullets covering what was performed (scope/procedure, drawn only from the router text above).
+APG's real report structures this section as one subheading per inspection zone (Tips, Airfoil, Platform, LE Angel Wing, TE Angel Wing, CC & CV Platform Shank, Side Shank/Pin Slots, Root Serrations), each with a bullet or two of that zone's findings. You do NOT have zone-level finding data here — only the procedural router text above, if any — so do not invent zone bullets with counts or defect types. Instead, use exactly two subheadings:
+- "FPI & Visual Inspection:" with bullets covering what was performed (scope/procedure, drawn only from the router text above when present).
 - "Findings:" with one bullet stating that zone-by-zone finding detail is documented on the accompanying Crack Map${crackMapAvailable ? "" : " — and noting that no crack-map source file was found for this job, so zone-level findings still need a tech rep's written note"}, attached as its own exhibit to this report.`,
     ctx
   );

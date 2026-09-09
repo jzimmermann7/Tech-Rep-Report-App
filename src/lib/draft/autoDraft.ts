@@ -50,12 +50,12 @@ export async function autoDraftJob(scan: JobScanResult): Promise<void> {
   const crackMapAvailable = bySectionId.get("crackMap")?.status !== "missing";
 
   const fpi = bySectionId.get("fpiVisual");
-  if (fpi?.parsedRouter) {
-    if (isUntouched("fpiVisual")) {
-      jobs.push(["fpiVisual", { content: buildFpiVisualDraft(fpi.parsedRouter, ctx, crackMapAvailable), draftError: undefined, lastGeneratedAt: stamp() }] satisfies PatchEntry);
-    }
-  } else {
-    jobs.push(missingDataStep("fpiVisual", "No router file with FPI/visual operations was found for this job — draft this section manually."));
+  // Drafts even without a router file -- buildFpiVisualDraft still has a scope + Crack-Map-pointer
+  // skeleton to offer from job metadata alone (see its own comment), just missing the
+  // procedure/form-number clause a router would have supplied. A tech rep opening to that honest,
+  // partially-filled draft is a better starting point than an empty "manual" box.
+  if (isUntouched("fpiVisual")) {
+    jobs.push(["fpiVisual", { content: buildFpiVisualDraft(fpi?.parsedRouter, ctx, crackMapAvailable), draftError: undefined, lastGeneratedAt: stamp() }] satisfies PatchEntry);
   }
 
   const repairs = bySectionId.get("recommendedRepairs");

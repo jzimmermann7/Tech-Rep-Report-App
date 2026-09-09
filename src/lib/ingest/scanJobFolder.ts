@@ -66,6 +66,19 @@ const PRINT_PDF_SHEET_PATTERNS: Record<string, RegExp> = {
   wallThickness: WALL_THICKNESS_SHEET_PATTERN,
 };
 
+// Shared with the /api/manual-attachment route, which is the only writer of this convention: a
+// file the tech rep manually attached (because the automatic file-matching found nothing, or
+// found the wrong thing) lives at "<jobRoot>/_Manual Attachments/<sectionId>/<filename>" -- a
+// real file inside the job folder like any other, picked up by the normal walk below and
+// associated with its section by folder path rather than by filename pattern. No separate
+// storage or job-state field needed; a rescan is all it takes to pick one up.
+const MANUAL_ATTACHMENTS_DIR = "_Manual Attachments";
+
+function manualAttachmentsFor(sectionId: string, files: JobFile[]): JobFile[] {
+  const prefix = `${MANUAL_ATTACHMENTS_DIR}/${sectionId}`;
+  return files.filter((f) => f.folderPath === prefix);
+}
+
 /** Re-runs a section's own filename-pattern sourceRules but requiring a .pdf instead of its
  * usual spreadsheet extension, to find the completed print-ready form alongside the data
  * spreadsheet the app actually parses (see PRINT_PDF_SECTIONS). */
@@ -146,13 +159,32 @@ async function scanFileBackedSection(section: SectionConfig, files: JobFile[], j
     };
   }
 
+  // A file the tech rep manually attached because the automatic match found nothing (or found
+  // the wrong thing) -- see manualAttachmentsFor's own comment. Treated as the highest-priority
+  // candidate below, ahead of anything the filename/folder pattern rules turned up on their own,
+  // since a human explicitly chose it.
+  const manualFiles = manualAttachmentsFor(section.id, files);
+  const manualPdf = manualFiles.find((f) => f.ext === ".pdf");
+
   // Computed once, up front, regardless of whether the section's usual data spreadsheet is even
   // present -- a job can have the completed print-ready PDF (see PRINT_PDF_SECTIONS) without a
   // matching .xlsx at all (e.g. Wall Thickness data that only ever existed as a PDF for a given
   // job), and that PDF is still strictly better than showing "missing" or a table we made up.
-  const printPdfFile = PRINT_PDF_SECTIONS.has(section.id) ? findPrintPdf(section, files) : undefined;
+  const printPdfFile = PRINT_PDF_SECTIONS.has(section.id) ? (findPrintPdf(section, files) ?? manualPdf) : undefined;
 
   const ruleMatches = findCandidates(section.sourceRules, files);
+  if (manualFiles.length > 0) {
+    // A manually-attached file can coincidentally also satisfy the section's own filename/folder
+    // pattern (e.g. a tech rep sensibly naming it "... Met Report.pdf" for metallurgicalReport,
+    // whose own pattern is exactly /met.*report/i) -- dedupe by relativePath so it doesn't show
+    // up twice, once from each source, as the identical candidate.
+    const manualPaths = new Set(manualFiles.map((f) => f.relativePath));
+    if (ruleMatches.length > 0) {
+      ruleMatches[0] = { ...ruleMatches[0], candidates: [...manualFiles, ...ruleMatches[0].candidates.filter((f) => !manualPaths.has(f.relativePath))] };
+    } else {
+      ruleMatches.push({ rule: section.sourceRules[0], candidates: manualFiles });
+    }
+  }
   if (ruleMatches.length === 0) {
     if (printPdfFile) {
       return {
@@ -195,15 +227,19 @@ async function scanFileBackedSection(section: SectionConfig, files: JobFile[], j
   }
 
   if (ATTACH_AS_IS_NO_PARSE.has(section.id)) {
-    const candidate = ruleMatches[0].candidates[0];
-    const ambiguous = ruleMatches[0].candidates.length > 1;
+    const candidates = ruleMatches[0].candidates;
+    const candidate = candidates[0];
+    const ambiguous = candidates.length > 1;
     return {
       ...base,
       status: ambiguous ? "needs-attention" : "ready",
       statusReason: ambiguous
-        ? `${ruleMatches[0].candidates.length} candidate files matched; using "${candidate.relativePath}" — confirm this is the right one.`
+        ? `${candidates.length} candidate files matched; using "${candidate.relativePath}" by default — pick the right one below.`
         : `Matched "${candidate.relativePath}".`,
-      matchedFiles: [candidate],
+      // All of them, not just the auto-pick -- the review screen lets the tech rep choose among
+      // these directly (see AttachAsIs / selectedAttachmentPath) instead of only ever seeing
+      // whichever one this heuristic happened to land on.
+      matchedFiles: candidates,
     };
   }
 
