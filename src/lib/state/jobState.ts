@@ -8,6 +8,14 @@ export interface SectionState {
   content?: string;
   /** For photo-select sections: the reviewer-confirmed selection. */
   selectedPhotoPaths?: string[];
+  /** For the I&A Summary narrative section only: whether to embed APG's standard 7FA
+   * modification-reference diagram (a fixed illustration, not one of the job's own photos --
+   * every 7FA I&A report includes it, showing the six standard modification callouts against a
+   * generic bucket drawing) below the summary text. Defaults to on for any job whose turbine
+   * model is a 7FA variant (see renderReportHtml.ts's renderStandardDiagram) -- set to false here
+   * to leave it out for a specific job; there's no per-job photo picker for this, since it's the
+   * same fixed reference image on every 7FA job, not something to select per job. */
+  includeStandardDiagram?: boolean;
   /** For the cover section: reviewer overrides/fill-ins for fields with no reliable auto-source
    * (Tech Rep, Customer PO, Prior Repair, Coating, ...), keyed the same as JobMetadata. */
   fields?: Record<string, string>;
@@ -24,6 +32,17 @@ export interface SectionState {
    * matched the naming pattern: the tech rep's own pick of which one is actually the real
    * exhibit, by relativePath. Overrides the auto-picked candidate for report generation. */
   selectedAttachmentPath?: string;
+  /** For table-from-source sections (Serial Number List, Height Dim Form, Dovetail Dimension,
+   * Wall Thickness): manual corrections to individual cells of the freshly-parsed table -- a
+   * typo'd serial number, a re-measured value, etc. Keyed "<row index>:<column name>" against
+   * that table's own row order (see applyTableEdits), and applied on top of the parse on every
+   * render, in both the review screen and the generated PDF -- never written back to the source
+   * spreadsheet itself. */
+  tableEdits?: Record<string, string>;
+  /** Freeform text for the real form's own blank "NOTES:" box under the table -- a reviewer's
+   * typed remarks standing in for what would be handwritten on the paper form, not one of this
+   * app's own automated notes (which live in ParsedTable.notes instead). */
+  tableNotes?: string;
 }
 
 export interface JobState {

@@ -412,6 +412,54 @@ button.generate-report:active:not(:disabled) {
   box-shadow: 0 1px 3px rgba(26, 116, 49, 0.4);
 }
 
+/* Full-screen overlay shown while assembling the final PDF -- covers the review screen without
+   replacing it, since a rescan or scan-in-progress screen swap would lose the tech rep's place. */
+.generating-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(11, 30, 66, 0.32);
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
+}
+
+.generating-overlay-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.8);
+  border-radius: 16px;
+  padding: 36px 48px;
+  box-shadow: 0 24px 60px rgba(3, 12, 30, 0.3);
+}
+
+/* A little larger here than the 50px default -- this card is the whole point of focus on
+   screen, not a small icon next to a wordmark. */
+.generating-overlay-card .app-logo-mark,
+.generating-overlay-card .app-logo-mark-img {
+  height: 72px;
+}
+
+.generating-overlay-text {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+  color: #0b3d91;
+}
+
+.generating-overlay-hint {
+  margin: 0;
+  font-size: 13px;
+  color: #33507a;
+  text-align: center;
+  max-width: 32ch;
+}
+
 .preview-table {
   border-collapse: collapse;
   width: 100%;
@@ -447,6 +495,47 @@ button.generate-report:active:not(:disabled) {
 .preview-table td.fail {
   color: #a4141a;
   font-weight: 700;
+}
+
+/* Editable table cells (Serial Number List, Height Dim Form, Dovetail Dimension, Wall Thickness)
+   -- flush and borderless so a cell full of inputs still reads as a plain data table, not a form,
+   until you actually click into one. Explicit font/color inheritance because inputs don't pick
+   those up from an ancestor by default (unlike a plain <td> text node), which matters here since
+   .fail's red/bold needs to reach text sitting inside the input. */
+.preview-table td input.table-cell-input {
+  width: 100%;
+  border: none;
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  padding: 0;
+  text-align: inherit;
+}
+
+.preview-table td input.table-cell-input:focus {
+  outline: 2px solid #0b3d91;
+  outline-offset: 1px;
+  border-radius: 3px;
+  background: #fbfdff;
+}
+
+/* The real form's "NOTES:" box, now an actual input instead of a decorative blank rectangle. */
+.form-notes-input {
+  display: block;
+  width: 100%;
+  min-height: 54px;
+  margin-top: 4px;
+  border: none;
+  background: transparent;
+  font: inherit;
+  font-size: 12px;
+  color: #1a1a1a;
+  resize: vertical;
+  padding: 0;
+}
+
+.form-notes-input:focus {
+  outline: none;
 }
 
 .preview-table th[data-col="Serial #"],
@@ -720,6 +809,10 @@ button.generate-report:active:not(:disabled) {
 
 .attachment-candidate:hover:not(.selected) {
   border-color: #0b3d91;
+  /* The generic button:hover rule (see its own comment further up this file) fills the whole
+     button navy on hover, same as any other button -- that rule doesn't touch text color, so
+     without this override the candidate's own dark label text sat unreadable on top of it. */
+  color: #ffffff;
 }
 
 .attachment-candidate.selected {
@@ -832,6 +925,44 @@ button.generate-report:active:not(:disabled) {
   filter: drop-shadow(0 3px 6px rgba(11, 61, 145, 0.3));
 }
 
+/* Loading variant of the mark (AppLogoMark with animated=true) -- a pale grayscale copy sits
+   underneath a full-color copy whose clip-path grows from the top down on a loop, so color
+   appears to "pour" through the mark while a job is being scanned/drafted. */
+.app-logo-mark {
+  position: relative;
+  display: inline-flex;
+  height: 50px;
+  flex-shrink: 0;
+}
+
+.app-logo-mark-img {
+  height: 50px;
+  width: auto;
+  display: block;
+}
+
+.app-logo-mark-base {
+  filter: grayscale(1) opacity(0.22);
+}
+
+.app-logo-mark-fill {
+  position: absolute;
+  top: 0;
+  left: 0;
+  filter: drop-shadow(0 3px 6px rgba(11, 61, 145, 0.3));
+  clip-path: inset(0 0 100% 0);
+  animation: app-logo-fill 2.2s ease-in-out infinite alternate;
+}
+
+@keyframes app-logo-fill {
+  from {
+    clip-path: inset(0 0 100% 0);
+  }
+  to {
+    clip-path: inset(0 0 0% 0);
+  }
+}
+
 .app-logo h1 {
   margin: 0;
   font-size: 34px;
@@ -855,6 +986,143 @@ button.generate-report:active:not(:disabled) {
   margin: 0 0 20px;
   color: #33507a;
   font-size: 14px;
+}
+
+/* OneDrive / This PC quick-start tabs at the top of the folder-picker card -- two starting
+   points instead of only ever defaulting into OneDrive, since a tech rep's job folders can live
+   on either. Same pill-toggle look as .photo-filter-tab. */
+.folder-source-tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.folder-source-tab {
+  background: rgba(255, 255, 255, 0.85);
+  color: #33507a;
+  border: 2px solid #d5e1f2;
+  border-radius: 999px;
+  padding: 7px 18px;
+  font-weight: 600;
+  font-size: 13px;
+  box-shadow: none;
+}
+
+.folder-source-tab:hover:not(.active) {
+  border-color: #0b3d91;
+  color: #0b3d91;
+}
+
+.folder-source-tab.active {
+  border-color: #0b3d91;
+  background: #0b3d91;
+  color: #ffffff;
+}
+
+/* The very first screen: which report to build, before any job folder is even picked. Two big
+   cards rather than the pill-toggle look above -- this is a one-time, higher-stakes choice for
+   the whole session (it decides which section list every request from here on uses), not a
+   quick filter toggle. */
+.report-type-options {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 340px;
+}
+
+.report-type-option {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  text-align: left;
+  background: rgba(255, 255, 255, 0.85);
+  color: #0b3d91;
+  border: 2px solid #d5e1f2;
+  border-radius: 12px;
+  padding: 16px 20px;
+  box-shadow: none;
+}
+
+.report-type-option:hover {
+  border-color: #0b3d91;
+  background: #0b3d91;
+  color: #ffffff;
+}
+
+.report-type-option-label {
+  font-weight: 700;
+  font-size: 16px;
+}
+
+.report-type-option-description {
+  font-weight: 400;
+  font-size: 13px;
+  color: #33507a;
+}
+
+.report-type-option:hover .report-type-option-description {
+  color: #ffffff;
+}
+
+/* Recursive job-folder search box -- finds a folder buried a level or two down in a "massive"
+   Working Jobs tree without knowing which numbered bucket it's under, instead of only ever
+   filtering whatever the current single level happens to show. */
+.folder-search {
+  position: relative;
+  margin: 4px 0 12px;
+}
+
+.folder-search-input {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid #d5e1f2;
+  border-radius: 8px;
+  background: #fbfdff;
+  padding: 9px 34px 9px 12px;
+  font-size: 13px;
+  color: #1a1a1a;
+}
+
+.folder-search-input::placeholder {
+  color: #8098bd;
+}
+
+.folder-search-input:focus {
+  outline: none;
+  border-color: #0b3d91;
+  box-shadow: 0 0 0 3px rgba(11, 61, 145, 0.12);
+}
+
+.folder-search-clear {
+  position: absolute;
+  top: 50%;
+  right: 8px;
+  transform: translateY(-50%);
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  color: #8098bd;
+  font-size: 13px;
+  font-weight: 700;
+  padding: 4px 6px;
+}
+
+.folder-search-clear:hover {
+  color: #0b3d91;
+}
+
+.folder-search-status {
+  display: block;
+  margin-top: 6px;
+  font-size: 12px;
+  color: #6a7fa3;
+}
+
+.folder-search-hint {
+  margin: 8px 2px 0;
+  font-size: 12px;
+  color: #6a7fa3;
 }
 
 /* Frosted-glass panel holding the interactive part of the screen (path, buttons, list) --

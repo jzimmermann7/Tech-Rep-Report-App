@@ -2,7 +2,7 @@ import { promises as fs } from "fs";
 import path from "path";
 import { PDFDocument } from "pdf-lib";
 import { scanJobFolder } from "../ingest/scanJobFolder";
-import { iaReportTemplate } from "../report-templates/ia-report";
+import { resolveReportTemplate } from "../report-templates";
 import { loadJobState } from "../state/jobState";
 import { renderReportSegments } from "./renderReportHtml";
 import { htmlToPdf } from "./htmlToPdf";
@@ -22,8 +22,8 @@ async function appendPdfPages(doc: PDFDocument, sourcePath: string): Promise<voi
   pages.forEach((p) => doc.addPage(p));
 }
 
-export async function generateReportPdf(jobRoot: string): Promise<{ buffer: Buffer; skippedAttachments: string[] }> {
-  const scan = await scanJobFolder(jobRoot, iaReportTemplate);
+export async function generateReportPdf(jobRoot: string, reportType?: string): Promise<{ buffer: Buffer; skippedAttachments: string[] }> {
+  const scan = await scanJobFolder(jobRoot, resolveReportTemplate(reportType));
   const state = await loadJobState(jobRoot);
   const segments = await renderReportSegments(scan, state);
 

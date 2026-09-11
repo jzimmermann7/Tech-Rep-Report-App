@@ -4,7 +4,7 @@ import sharp from "sharp";
 import type { JobScanResult, SectionScanResult } from "../ingest/scanJobFolder";
 import { COVER_FIELD_ORDER } from "../ingest/jobMetadata";
 import type { JobState, SectionState } from "../state/jobState";
-import type { ParsedTable } from "../ingest/parsers/types";
+import { applyTableEdits, type ParsedTable } from "../ingest/parsers/types";
 
 // APG's real letterhead colors, sampled directly from a completed report (Job #20443): a short
 // blue segment at the left of the header bar, gray for the rest of its width.
@@ -60,21 +60,24 @@ function renderFormHeader(formHeader: Array<{ label: string; value: string }> | 
   return `<div class="form-header-grid">${cells}</div>`;
 }
 
-/** The real form's blank "NOTES:" box for a reviewer's handwritten remarks under the table —
- * kept even when there's nothing to say, since it's part of the original form's own layout. */
-function renderNotesBox(): string {
-  return `<div class="form-notes-box"><span class="form-notes-label">NOTES:</span></div>`;
+/** The real form's blank "NOTES:" box for a reviewer's remarks under the table — kept even when
+ * there's nothing to say yet, since it's part of the original form's own layout. Renders the
+ * tech rep's typed text (SectionState.tableNotes) standing in for what would be handwritten on
+ * the paper form. */
+function renderNotesBox(text?: string): string {
+  const body = text ? `<div class="form-notes-text">${escapeHtml(text).replace(/\n/g, "<br/>")}</div>` : "";
+  return `<div class="form-notes-box"><span class="form-notes-label">NOTES:</span>${body}</div>`;
 }
 
 /** columnBlocks > 1 reflows a long, simple list (currently just Serial Number List) into that
  * many side-by-side mini-tables instead of one tall single-column table — mirroring the real
  * DS-0554 form's own "three parallel column blocks" layout — so a 90+ row list takes a third as
  * many printed pages instead of running on and on down a single column. */
-function renderTable(table: ParsedTable, options?: { columnBlocks?: number }): string {
+function renderTable(table: ParsedTable, options?: { columnBlocks?: number; notesText?: string }): string {
   const columnBlocks = options?.columnBlocks ?? 1;
   const notes = table.notes.length ? `<p class="table-notes">${table.notes.map(escapeHtml).join("<br/>")}</p>` : "";
   const formHeaderHtml = renderFormHeader(table.formHeader);
-  const notesBoxHtml = table.hasNotesBox ? renderNotesBox() : "";
+  const notesBoxHtml = table.hasNotesBox ? renderNotesBox(options?.notesText) : "";
 
   if (columnBlocks > 1 && table.rows.length > columnBlocks) {
     const headerRow = `<tr>${table.columns.map((c) => `<th data-col="${escapeHtml(c)}">${escapeHtml(c)}</th>`).join("")}</tr>`;
@@ -154,6 +157,39 @@ async function photoToDataUri(absolutePath: string): Promise<string> {
   return `data:image/jpeg;base64,${buffer.toString("base64")}`;
 }
 
+let standardDiagramDataUriCache: string | null = null;
+
+/** APG's standard 7FA modification-reference diagram -- a fixed illustration (not one of the
+ * job's own photos) showing the six standard modification callouts (shank lead-in cut, platform
+ * scallop cut, trailing-edge platform undercut, dovetail serration relief cutback, shank feed
+ * hole, platform film cooling holes) against a generic bucket drawing. Every real 7FA I&A report
+ * includes this same image on its Engineering Summary page -- confirmed against a real completed
+ * report -- so it's a static asset (public/reference), not something read from the job folder,
+ * and cached per process the same way the letterhead logo is. */
+async function standardDiagramDataUri(): Promise<string> {
+  if (!standardDiagramDataUriCache) {
+    const buffer = await fs.readFile(path.join(process.cwd(), "public", "reference", "7fa-modification-diagram.png"));
+    standardDiagramDataUriCache = `data:image/png;base64,${buffer.toString("base64")}`;
+  }
+  return standardDiagramDataUriCache;
+}
+
+/** A 7FA bucket's turbine model reads like "F7FA" or "F7FA.03" -- prefix match, not exact, so a
+ * dot-revision suffix doesn't fail the check. */
+const SEVEN_FA_PATTERN = /^F?7FA/i;
+
+/** Whether to embed the standard diagram on this job's I&A Summary page: on by default for any
+ * 7FA job (see SEVEN_FA_PATTERN), off for anything else (the diagram is specific to 7FA's
+ * modification set, not a generic illustration), and always overridable per job via
+ * SectionState.includeStandardDiagram once the tech rep has made an explicit choice either way. */
+async function renderStandardDiagram(scan: JobScanResult, state: JobState): Promise<string> {
+  const isSevenFA = SEVEN_FA_PATTERN.test((scan.metadata.turbineModel ?? "").trim());
+  const included = state.sections["iaSummary"]?.includeStandardDiagram ?? isSevenFA;
+  if (!included) return "";
+  const dataUri = await standardDiagramDataUri();
+  return `<div class="summary-photos"><figure><img src="${dataUri}" /></figure></div>`;
+}
+
 async function renderPhotoSet(section: SectionScanResult, jobRoot: string, sectionState: SectionState | undefined): Promise<string> {
   const selectedPaths = sectionState?.selectedPhotoPaths;
   // No arbitrary cap here — the default is every matched photo, same as the real preselection
@@ -199,6 +235,16 @@ const REPORT_STYLES = (apgBlue: string, apgBarGray: string) => `
   section { page-break-inside: avoid; }
   section.report-page { page-break-before: always; margin-bottom: 16px; }
   section.table-section { page-break-inside: auto; }
+  /* Recommended Repairs' numbered steps flow into two columns instead of one full-width column,
+     so short step labels don't waste most of the page's width -- text wraps within each column
+     instead. Tighter margins/line-height than the rest of the narrative sections specifically so
+     a routine-length list has a real shot at landing on one page; break-inside: avoid per item
+     keeps a single step's text from splitting across the column break. Same reasoning as
+     .table-section above for allowing the section itself to flow across pages: a step list long
+     enough to spill past one page should do that gracefully, not get force-fit or clipped. */
+  section.repairs-section { page-break-inside: auto; }
+  .repairs-columns { column-count: 2; column-gap: 28px; }
+  .repairs-columns p { font-size: 13px; line-height: 1.35; margin: 0 0 5px; break-inside: avoid; }
 
   /* Letterhead used at the top of every page after the cover, matching APG's standard report
      header: small logo, centered bold title, blue-to-gray bar underneath. The logo is absolutely
@@ -239,10 +285,16 @@ const REPORT_STYLES = (apgBlue: string, apgBarGray: string) => `
   /* The real form's blank "NOTES:" box under the table (see renderNotesBox). */
   .form-notes-box { border: 1px solid #000; min-height: 60px; margin-top: 10px; padding: 4px 6px; }
   .form-notes-label { font-weight: 700; text-decoration: underline; font-size: 10px; }
+  .form-notes-text { margin-top: 4px; font-size: 11px; white-space: pre-wrap; }
   .photo-grid { display: flex; flex-wrap: wrap; gap: 8px; }
   .photo-grid figure { width: 30%; margin: 0; }
   .photo-grid img { width: 100%; height: auto; border: 1px solid #ccc; }
   .photo-grid figcaption { font-size: 8px; color: #555; word-break: break-all; }
+  /* I&A Summary's standard reference diagram (7FA jobs only -- see renderStandardDiagram), placed
+     after the narrative text it illustrates. */
+  .summary-photos { display: flex; gap: 12px; margin-top: 16px; }
+  .summary-photos figure { flex: 1 1 0; margin: 0; min-width: 0; }
+  .summary-photos img { width: 100%; height: auto; max-height: 320px; object-fit: contain; border: 1px solid #ccc; }
 `;
 
 function wrapHtml(bodyHtml: string): string {
@@ -297,13 +349,86 @@ export async function renderReportSegments(scan: JobScanResult, state: JobState)
   for (const id of narrativeSectionIds) {
     const section = sectionsById.get(id);
     if (!section) continue;
-    bodyParts.push(`<section class="report-page narrative-section">${pageHeader(section.title, logo)}${renderNarrative(contentFor(id))}</section>`);
+    const narrativeHtml = renderNarrative(contentFor(id));
+    // Recommended Repairs is just a numbered list of short step labels -- a full-width column
+    // wastes most of the page's width on short lines and pushes a routine ~15-25 step list onto
+    // a second or third page for no reason. Two CSS columns (see .repairs-columns) let text wrap
+    // within a narrower column instead, fitting far more steps per page while still reading
+    // naturally -- and still flows onto another page on its own if a job's list is genuinely too
+    // long, rather than forcing it to a fixed page count.
+    const standardDiagramHtml = id === "iaSummary" ? await renderStandardDiagram(scan, state) : "";
+    const body = id === "recommendedRepairs" ? `<div class="repairs-columns">${narrativeHtml}</div>` : `${narrativeHtml}${standardDiagramHtml}`;
+    const sectionClass = id === "recommendedRepairs" ? "report-page narrative-section repairs-section" : "report-page narrative-section";
+    bodyParts.push(`<section class="${sectionClass}">${pageHeader(section.title, logo)}${body}</section>`);
   }
 
-  const tableSectionIds = ["serialNumberList", "heightDimForm", "dovetailDimension", "wallThickness"];
+  // The Final Report interleaves its own dimensional re-checks with a handful of true
+  // attach-as-is certifications/checklists throughout the document (confirmed against a real
+  // completed report, Job 18664) rather than grouping every attach-as-is exhibit at the very end
+  // the way the I&A Report's chemTest/crackMap/metallurgicalReport do (see generateReport.ts's
+  // ATTACH_AS_IS_ORDER) -- so these are embedded inline, at their real position in this same
+  // ordered loop, instead of appended separately at the end.
+  const INLINE_ATTACH_SECTIONS = new Set([
+    "preWeldHeatTreatChart",
+    "postWeldHeatTreatChart",
+    "xRayInspection",
+    "postCoatHeatTreatChart",
+    "finalAgeHeatTreatChart",
+    "coatingCertification",
+    "shotPeenAlSealStripCert",
+    "damperPinCheck",
+  ]);
+
+  const tableSectionIds = [
+    "serialNumberList",
+    "scrapReport",
+    "snRecordingSheet",
+    "heightDimForm",
+    "dovetailDimension",
+    "zDropDimension",
+    "wallThickness",
+    "airflowReport",
+    // Final Report's own re-checks and inline exhibits, in the same order the real report shows
+    // them (see INLINE_ATTACH_SECTIONS' own comment).
+    "finalSerialNumberList",
+    "finalScrapReport",
+    "finalSnRecordingSheet",
+    "preWeldHeatTreatChart",
+    "postWeldHeatTreatChart",
+    "xRayInspection",
+    "finalWallThickness",
+    "postCoatHeatTreatChart",
+    "finalAgeHeatTreatChart",
+    "coatingCertification",
+    "finalHeightDimForm",
+    "finalAirflowReport",
+    "shotPeenAlSealStripCert",
+    "damperPinCheck",
+  ];
+  // Scrap Report / SN Recording Sheet / Airflow Report / Z-Drop Dimensions are all genuinely
+  // optional -- most jobs won't have scrap or prior-repair history to report, most jobs don't
+  // need an airflow report, and Z-Drop Dimensions doesn't apply to 1st-stage buckets at all (see
+  // zDropDimension.ts). Unlike serialNumberList/heightDimForm/etc (core to every I&A report, so a
+  // real gap there should still show as an honest "No data available" page), these four are left
+  // out of the generated report entirely rather than printing an empty or "missing" page nobody
+  // asked for -- exactly the "conditional logic, not on every report" these were built for.
+  const OMIT_WHEN_EMPTY = new Set(["scrapReport", "snRecordingSheet", "airflowReport", "zDropDimension", "finalScrapReport", "finalSnRecordingSheet", "finalAirflowReport"]);
   for (const id of tableSectionIds) {
     const section = sectionsById.get(id);
     if (!section) continue;
+    if (INLINE_ATTACH_SECTIONS.has(id)) {
+      // Same "tech rep's own pick overrides the auto-match" convention as the end-of-document
+      // attach-as-is exhibits (see generateReport.ts's ATTACH_AS_IS_ORDER loop) -- just embedded
+      // here instead of appended later. Silently skipped when nothing was found at all, same as
+      // any other optional exhibit; no placeholder page for a chart/cert nobody asked to see.
+      const selectedPath = state.sections[id]?.selectedAttachmentPath;
+      const file = (selectedPath && section.matchedFiles.find((f) => f.relativePath === selectedPath)) || section.matchedFiles[0];
+      if (file && file.ext === ".pdf") {
+        flush();
+        segments.push({ kind: "pdf", path: file.absolutePath });
+      }
+      continue;
+    }
     if (section.printPdfFile) {
       // A completed, print-ready PDF of this exact form exists (see PRINT_PDF_SECTIONS) --
       // don't render our own table here at all. Flush whatever HTML has accumulated so far as
@@ -313,16 +438,33 @@ export async function renderReportSegments(scan: JobScanResult, state: JobState)
       segments.push({ kind: "pdf", path: section.printPdfFile.absolutePath });
       continue;
     }
-    const body = section.parsedTable
-      ? renderTable(section.parsedTable, { columnBlocks: id === "serialNumberList" ? 3 : 1 })
+    const editedTable = section.parsedTable ? applyTableEdits(section.parsedTable, state.sections[id]?.tableEdits) : undefined;
+    if (OMIT_WHEN_EMPTY.has(id) && (!editedTable || editedTable.rows.length === 0)) continue;
+    const body = editedTable
+      ? renderTable(editedTable, { columnBlocks: id === "serialNumberList" ? 3 : 1, notesText: state.sections[id]?.tableNotes })
       : `<p class="missing">No data available.</p>`;
     bodyParts.push(`<section class="report-page table-section">${pageHeader(section.title, logo)}${body}</section>`);
   }
 
-  const photoSection = sectionsById.get("photoSet");
-  if (photoSection) {
-    const photoHtml = await renderPhotoSet(photoSection, scan.jobRoot, state.sections["photoSet"]);
+  // Whichever photo-set section this report template actually has (see autoDraftJob's own
+  // comment on the same pairing) -- a template only ever has one of the two.
+  for (const id of ["photoSet", "finalPhotoSet"]) {
+    const photoSection = sectionsById.get(id);
+    if (!photoSection) continue;
+    const photoHtml = await renderPhotoSet(photoSection, scan.jobRoot, state.sections[id]);
     bodyParts.push(`<section class="report-page">${pageHeader(photoSection.title, logo)}${photoHtml}</section>`);
+  }
+
+  // Final Moment Weigh comes after Final Photos in the real report (Job 18664), not grouped with
+  // the other inline attach-as-is exhibits above -- same inline-embed mechanism regardless.
+  const momentWeighSection = sectionsById.get("finalMomentWeigh");
+  if (momentWeighSection) {
+    const selectedPath = state.sections["finalMomentWeigh"]?.selectedAttachmentPath;
+    const file = (selectedPath && momentWeighSection.matchedFiles.find((f) => f.relativePath === selectedPath)) || momentWeighSection.matchedFiles[0];
+    if (file && file.ext === ".pdf") {
+      flush();
+      segments.push({ kind: "pdf", path: file.absolutePath });
+    }
   }
 
   const crackMapSection = sectionsById.get("crackMap");

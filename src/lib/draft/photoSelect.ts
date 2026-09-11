@@ -8,6 +8,14 @@ export interface PhotoExclusion {
   reason: string;
 }
 
+/** "high" (an indication, marking, or highlighted/circled problem area is actually visible --
+ * exactly what a reviewer opens the report to see) sorts before "normal" (a relevant but
+ * unremarkable inspection shot), which sorts before "low" (documents the part arriving/being
+ * unloaded, not its condition -- still real documentation, so still included, just not what
+ * anyone's looking for first). Kept photos default to "normal" if the model's reply for that
+ * photo didn't parse, so a parsing gap never drops a photo out of the selection over it. */
+export type PhotoPriority = "high" | "normal" | "low";
+
 export interface PhotoSelectResult {
   includedPaths: string[];
   excluded: PhotoExclusion[];
@@ -15,6 +23,7 @@ export interface PhotoSelectResult {
 }
 
 const MAX_PHOTOS_PER_CALL = 20;
+const PRIORITY_RANK: Record<PhotoPriority, number> = { high: 0, normal: 1, low: 2 };
 
 function mediaTypeFor(ext: string): "image/jpeg" | "image/png" {
   return ext === ".png" ? "image/png" : "image/jpeg";
@@ -26,11 +35,16 @@ function chunk<T>(items: T[], size: number): T[][] {
   return out;
 }
 
-/** Best-effort vision-based screen for exact duplicates / unusable blur within one batch. This is
- * a bonus refinement on top of the real default (include everything) — not a requirement for it.
- * Without an API key, or if the call fails for any other reason, this returns zero exclusions
- * rather than throwing, so photo preselection never depends on AI access being available. */
-async function flagExclusionsInBatch(batch: JobFile[]): Promise<{ exclusions: PhotoExclusion[]; raw: string }> {
+/** Best-effort vision-based classification of one batch: which photos to drop (exact/near-
+ * duplicate or too blurry to use) and, for everything kept, how strongly it belongs in an
+ * inspection report (see PhotoPriority) -- an indication/marking/highlighted problem area versus
+ * a routine shot versus a receiving/logistics photo that documents the crate arriving rather than
+ * the part's condition. This is a refinement on top of the real default (include everything) --
+ * never a requirement for it. Without an API key, or if the call fails for any other reason, this
+ * returns zero exclusions and "normal" for every photo (i.e. today's plain natural-order
+ * behavior), so photo preselection never depends on AI access being available. */
+async function classifyBatch(batch: JobFile[]): Promise<{ exclusions: PhotoExclusion[]; priorities: Map<string, PhotoPriority>; raw: string }> {
+  const defaultPriorities = new Map<string, PhotoPriority>(batch.map((f) => [f.relativePath, "normal" as const]));
   try {
     const imageBlocks = await Promise.all(
       batch.map(async (file) => {
@@ -51,16 +65,21 @@ async function flagExclusionsInBatch(batch: JobFile[]): Promise<{ exclusions: Ph
     const client = getAnthropicClient();
     const response = await client.messages.create({
       model: VISION_MODEL,
-      max_tokens: 1024,
+      max_tokens: 1536,
       system:
-        "You are helping a turbine-parts repair tech rep prepare photos for a customer inspection report. The default is to include every photo — tech reps aren't picky about volume, and having a few extra rarely hurts. Only flag a photo for exclusion if it is an exact or near-duplicate of another photo in this batch (keep the sharpest one, flag the rest) or if it is so blurry/out of focus that the subject can't be made out. Never exclude a photo just for composition, lighting, or relevance.",
+        "You are helping a turbine-parts repair tech rep prepare photos for a customer inspection report. The default is to include every photo — tech reps aren't picky about volume, and having a few extra rarely hurts — but the ones that actually show a finding should surface first, and pure shipping/logistics photos should sort last, not vanish. Classify every photo with exactly one tag:\n" +
+        "- HIGH: an indication, crack, marking, or highlighted/circled problem area is actually visible in the photo — this is what a reviewer opens the report to see.\n" +
+        "- NORMAL: a relevant incoming/NDT inspection photo (an overall part shot, a setup shot, an unremarkable close-up) that doesn't show a specific finding.\n" +
+        "- LOW: a shipping/receiving photo — the crate, the box, unloading, packing material — that documents logistics, not the part's condition.\n" +
+        "- EXCLUDE: an exact or near-duplicate of another photo in this batch (keep the sharpest, tag the rest EXCLUDE), or so blurry/out of focus the subject can't be made out.\n" +
+        "Never use EXCLUDE just for composition, lighting, or relevance — that's what LOW is for.",
       messages: [
         {
           role: "user",
           content: [
             {
               type: "text",
-              text: `Here are ${batch.length} candidate photos, in this order:\n${labelList}\n\nReply with ONLY the photos to exclude, as a numbered list matching "Photo N: duplicate of Photo M" or "Photo N: too blurry to use" — one line per excluded photo. If every photo should be kept, reply with the single word NONE.`,
+              text: `Here are ${batch.length} candidate photos, in this order:\n${labelList}\n\nReply with exactly one line per photo, in order, as "Photo N: TAG" or "Photo N: TAG (reason)" for EXCLUDE -- TAG is one of HIGH, NORMAL, LOW, EXCLUDE.`,
             },
             ...imageBlocks,
           ],
@@ -72,23 +91,28 @@ async function flagExclusionsInBatch(batch: JobFile[]): Promise<{ exclusions: Ph
     const raw = textBlock && textBlock.type === "text" ? textBlock.text : "";
 
     const exclusions: PhotoExclusion[] = [];
-    if (!/^\s*none\s*$/i.test(raw.trim())) {
-      const lineRegex = /photo\s+(\d+)\s*:\s*(.+)/gi;
-      let match: RegExpExecArray | null;
-      while ((match = lineRegex.exec(raw))) {
-        const index = Number(match[1]) - 1;
-        if (index >= 0 && index < batch.length) {
-          exclusions.push({ relativePath: batch[index].relativePath, reason: match[2].trim() });
-        }
+    const priorities = new Map(defaultPriorities);
+    const lineRegex = /photo\s+(\d+)\s*:\s*(HIGH|NORMAL|LOW|EXCLUDE)\b\s*(?:\((.+)\))?/gi;
+    let match: RegExpExecArray | null;
+    while ((match = lineRegex.exec(raw))) {
+      const index = Number(match[1]) - 1;
+      if (index < 0 || index >= batch.length) continue;
+      const tag = match[2].toUpperCase();
+      const file = batch[index];
+      if (tag === "EXCLUDE") {
+        exclusions.push({ relativePath: file.relativePath, reason: match[3]?.trim() || "duplicate or too blurry to use" });
+      } else {
+        priorities.set(file.relativePath, tag.toLowerCase() as PhotoPriority);
       }
     }
 
-    return { exclusions, raw };
+    return { exclusions, priorities, raw };
   } catch (err) {
     // No API key, rate limit, network error, whatever — the whole point of this batch is an
-    // optional refinement, so a failure here just means "keep everything," not "fail the scan."
+    // optional refinement, so a failure here just means "keep everything at normal priority,"
+    // not "fail the scan."
     const message = err instanceof Error ? err.message : "vision-based screening failed";
-    return { exclusions: [], raw: `(skipped duplicate/blur screening: ${message})` };
+    return { exclusions: [], priorities: defaultPriorities, raw: `(skipped content-based screening: ${message})` };
   }
 }
 
@@ -125,37 +149,52 @@ async function isUvLit(absolutePath: string): Promise<boolean> {
   }
 }
 
-/** Preselects photos for the I&A (Incoming Inspect-and-Advise) report — Incoming-stage photos
- * (which includes any NDT subfolder nested under "3A Incoming") by default, since those are what
- * an incoming-inspection report actually documents; in-process/final-stage shots belong to a
- * different deliverable and are left out of the preselection, though they're still fully
- * browsable and selectable by hand in the grid. Shipping/receiving photos (the box/crate arriving)
- * are excluded outright — not inspection content. Within what's left, every photo is included by
- * default — tech reps aren't picky about volume, so there's no "pick the best N" judgment call,
- * just a screen for exact/near-duplicates (kept once) and shots too blurry to use. Batched to keep
- * each vision call a reasonable size; duplicate detection only catches matches within the same
- * batch. Falls back to screening the full candidate set if no Incoming-stage photos were found at
- * all, rather than silently preselecting nothing.
+/** Preselects photos for a photo-set section — Incoming-stage photos by default (which includes
+ * any NDT subfolder nested under "3A Incoming"), since that's what an I&A report documents; the
+ * Final Report's own photo set instead prefers Final-stage photos (see `preferredStage`) — same
+ * mechanism, different stage. Whichever stage isn't preferred is left out of the preselection,
+ * though still fully browsable and selectable by hand in the grid. Shipping/receiving photos (the
+ * box/crate arriving) are excluded outright — not inspection content. Within what's left, every
+ * photo is included by default — tech reps aren't picky about volume, so there's no "pick the
+ * best N" judgment call, just a screen for exact/near-duplicates (kept once) and shots too blurry
+ * to use. Batched to keep each vision call a reasonable size; duplicate detection only catches
+ * matches within the same batch. Falls back to screening the full candidate set if no photos for
+ * the preferred stage were found at all, rather than silently preselecting nothing.
  *
- * The final selection is then grouped into two blocks — UV/blacklight FPI shots together, then
- * normal work-light shots together — instead of left in whatever order they were found, since the
- * two lighting conditions read as unrelated photos when intermixed. */
-export async function selectBestPhotos(candidates: JobFile[]): Promise<PhotoSelectResult> {
+ * The final selection is grouped into two blocks — UV/blacklight FPI shots together, then normal
+ * work-light shots together — since the two lighting conditions read as unrelated photos when
+ * intermixed, and within each of those two blocks, ordered by PhotoPriority: a photo that
+ * actually shows an indication/marking/highlighted problem area first, a routine inspection shot
+ * next, and a shipping/receiving/logistics photo (crate, box, unloading -- documents the part
+ * arriving, not its condition) last. Nothing in "low" priority is dropped, just deprioritized --
+ * the same "tech reps aren't picky about volume" reasoning as the dup/blur exclusion above,
+ * applied to ordering instead of inclusion. */
+export async function selectBestPhotos(candidates: JobFile[], preferredStage: "incoming" | "final" = "incoming"): Promise<PhotoSelectResult> {
   const stageGroups = groupPhotosByStage(candidates);
-  const incoming = stageGroups["incoming"]?.length ? stageGroups["incoming"] : candidates;
-  const priorityCandidates = incoming.filter((f) => !/shipping/i.test(f.folderPath));
-  const batches = chunk(priorityCandidates, MAX_PHOTOS_PER_CALL);
+  const preferred = stageGroups[preferredStage]?.length ? stageGroups[preferredStage] : candidates;
+  const eligibleCandidates = preferred.filter((f) => !/shipping/i.test(f.folderPath));
+  const batches = chunk(eligibleCandidates, MAX_PHOTOS_PER_CALL);
 
-  const batchResults = await Promise.all(batches.map(flagExclusionsInBatch));
+  const batchResults = await Promise.all(batches.map(classifyBatch));
 
   const excluded = batchResults.flatMap((r) => r.exclusions);
   const raw = batchResults.map((r) => r.raw).join("\n\n");
   const excludedPaths = new Set(excluded.map((e) => e.relativePath));
-  const kept = priorityCandidates.filter((f) => !excludedPaths.has(f.relativePath));
+  const priorities = new Map<string, PhotoPriority>();
+  for (const r of batchResults) for (const [path, tier] of r.priorities) priorities.set(path, tier);
+  const kept = eligibleCandidates.filter((f) => !excludedPaths.has(f.relativePath));
+
+  // Highest priority (lowest rank number) first, natural filename order as the tiebreaker within
+  // a tier -- same ordering logic as before, just with the priority tier as the primary key
+  // ahead of filename.
+  const byPriorityThenName = (a: JobFile, b: JobFile) => {
+    const rankDiff = PRIORITY_RANK[priorities.get(a.relativePath) ?? "normal"] - PRIORITY_RANK[priorities.get(b.relativePath) ?? "normal"];
+    return rankDiff !== 0 ? rankDiff : naturalCompare(a.baseName, b.baseName);
+  };
 
   const uvFlags = await Promise.all(kept.map((f) => isUvLit(f.absolutePath)));
-  const uvGroup = kept.filter((_, i) => uvFlags[i]).sort((a, b) => naturalCompare(a.baseName, b.baseName));
-  const normalGroup = kept.filter((_, i) => !uvFlags[i]).sort((a, b) => naturalCompare(a.baseName, b.baseName));
+  const uvGroup = kept.filter((_, i) => uvFlags[i]).sort(byPriorityThenName);
+  const normalGroup = kept.filter((_, i) => !uvFlags[i]).sort(byPriorityThenName);
   const includedPaths = [...uvGroup, ...normalGroup].map((f) => f.relativePath);
 
   return { includedPaths, excluded, raw };
