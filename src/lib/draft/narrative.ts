@@ -138,24 +138,54 @@ function categoryBullet(table: ParsedTable, failDescription: string): string {
   return table.notes.length ? `${base} ${table.notes.join(" ")}` : base;
 }
 
+/** A dimensional category's source, for the narrative builders below. `table` is the parsed data
+ * (for computing real pass/fail counts); `hasPdf` is true when a completed, print-ready PDF of
+ * this exact form exists and will be embedded in the generated report regardless of whether the
+ * data spreadsheet itself parsed (confirmed on a real job: Height Dim Form and Wall Thickness can
+ * both come back "ready" off their print-ready PDF alone, with no readable spreadsheet at all --
+ * treating that as "not yet available" here would flatly contradict what the report actually
+ * contains). A category is available (not "missing") if EITHER is present. */
+export interface DimCategoryInput {
+  table?: ParsedTable;
+  hasPdf?: boolean;
+}
+
 /**
  * Builds the Dimensional Inspection Summary directly from the parsed tables — no LLM call at
  * all. Unlike the other narrative sections, this one is pure counting and fixed phrasing (the
  * same "Inspected buckets are within APG criteria" / "<N> of the inspected buckets..." template
  * every time), so there's no real writing task an AI would help with, and no reason a missing API
- * key should keep this section from drafting. Runs on whatever tables exist — including just one
- * of the three — and says plainly which ones are still missing rather than pretending the section
- * is complete. The overall repairability call is deliberately left to the reviewing tech rep
- * rather than asserted here, since that's a judgment call this function has no basis to make.
+ * key should keep this section from drafting. Runs on whatever categories are actually available
+ * — including just one of them — and says plainly which ones are still missing rather than
+ * pretending the section is complete. The overall repairability call is deliberately left to the
+ * reviewing tech rep rather than asserted here, since that's a judgment call this function has no
+ * basis to make.
  */
-export function buildDimensionalSummaryDraft(tables: { heightDimForm?: ParsedTable; dovetailDimension?: ParsedTable; wallThickness?: ParsedTable }): string {
+export function buildDimensionalSummaryDraft(inputs: {
+  heightDimForm?: DimCategoryInput;
+  dovetailDimension?: DimCategoryInput;
+  zDropDimension?: DimCategoryInput;
+  wallThickness?: DimCategoryInput;
+}): string {
   const lines: string[] = [];
   const missing: string[] = [];
   const flagged: string[] = [];
   let categoryCount = 0;
+  // Categories reviewed only via their print-ready PDF, with no readable spreadsheet to compute
+  // pass/fail from -- kept out of categoryCount/flagged and the "within APG criteria" roll-up
+  // below, same reasoning as Z-Notch Drop just below: folding a category with no computed
+  // pass/fail into an aggregate "all within criteria" claim would assert something this app never
+  // actually checked, just because it happened not to fail (it was never tested either way).
+  const reviewedOnly: string[] = [];
 
-  if (tables.heightDimForm) {
-    for (const cat of heightCategoryBreakdown(tables.heightDimForm)) {
+  // The 2nd/3rd-stage height-form strategy (see heightDimForm.ts's parseHeightDimFormAlt)
+  // deliberately never computes pass/fail, and its table's outOfSpecCount stays undefined the
+  // same way every other "not computed" table in this app does -- checked here so its real
+  // measurements don't get run through heightCategoryBreakdown, which would otherwise read "no
+  // cell says OUT OF SPEC" as "zero failures" and silently claim a pass/fail verdict this app
+  // never actually made.
+  if (inputs.heightDimForm?.table && inputs.heightDimForm.table.outOfSpecCount !== undefined) {
+    for (const cat of heightCategoryBreakdown(inputs.heightDimForm.table)) {
       categoryCount++;
       const label = `${cat.label} (${cat.letter})`;
       lines.push(`${label}:`);
@@ -167,28 +197,68 @@ export function buildDimensionalSummaryDraft(tables: { heightDimForm?: ParsedTab
       }
       lines.push("");
     }
+  } else if (inputs.heightDimForm?.table) {
+    reviewedOnly.push("Heights");
+    lines.push("Heights:");
+    lines.push(
+      `- ${inputs.heightDimForm.table.sampleSize} bucket(s) measured — see the Height Dim Form section and review against its printed nominal values directly (this form mixes more than one tolerance convention, so pass/fail isn't computed automatically).`
+    );
+    lines.push("");
+  } else if (inputs.heightDimForm?.hasPdf) {
+    reviewedOnly.push("Heights");
+    lines.push("Heights:");
+    lines.push("- Reviewed via the completed form (see Height Dim Form section) — its data spreadsheet wasn't in a format this app could read automatically.");
+    lines.push("");
   } else {
     missing.push("Height Dim Form (TE/LE Angel Wing Height, Tip Height, Squealer Tip Thickness)");
   }
 
-  if (tables.dovetailDimension) {
+  if (inputs.dovetailDimension?.table) {
     categoryCount++;
     lines.push("Root Serrations Dims:");
-    lines.push(`- ${categoryBullet(tables.dovetailDimension, "have at least one reading outside APG criteria")}`);
-    if ((tables.dovetailDimension.outOfSpecCount ?? 0) > 0) flagged.push("Root Serrations Dims");
+    lines.push(`- ${categoryBullet(inputs.dovetailDimension.table, "have at least one reading outside APG criteria")}`);
+    if ((inputs.dovetailDimension.table.outOfSpecCount ?? 0) > 0) flagged.push("Root Serrations Dims");
+    lines.push("");
+  } else if (inputs.dovetailDimension?.hasPdf) {
+    reviewedOnly.push("Root Serrations Dims");
+    lines.push("Root Serrations Dims:");
+    lines.push("- Reviewed via the completed form (see Dovetail Dimension Inspection section) — its data spreadsheet wasn't in a format this app could read automatically.");
     lines.push("");
   } else {
     missing.push("Dovetail Dimension Inspection");
   }
 
-  if (tables.wallThickness) {
+  if (inputs.wallThickness?.table) {
     categoryCount++;
     lines.push("UT Wall Thickness:");
-    lines.push(`- ${categoryBullet(tables.wallThickness, "are below the printed minimum wall-thickness limit")}`);
-    if ((tables.wallThickness.outOfSpecCount ?? 0) > 0) flagged.push("UT Wall Thickness");
+    lines.push(`- ${categoryBullet(inputs.wallThickness.table, "are below the printed minimum wall-thickness limit")}`);
+    if ((inputs.wallThickness.table.outOfSpecCount ?? 0) > 0) flagged.push("UT Wall Thickness");
+    lines.push("");
+  } else if (inputs.wallThickness?.hasPdf) {
+    reviewedOnly.push("UT Wall Thickness");
+    lines.push("UT Wall Thickness:");
+    lines.push("- Reviewed via the completed form (see Wall Thickness section) — its data spreadsheet wasn't in a format this app could read automatically.");
     lines.push("");
   } else {
     missing.push("Wall Thickness (UT)");
+  }
+
+  // 2nd/3rd stage buckets only -- absent (not "missing") for a 1st-stage job, so this doesn't
+  // add itself to `missing` the way the three sections above do when their form isn't found.
+  // Deliberately kept out of `categoryCount`/`flagged` and the "within APG criteria" roll-up
+  // below, too: unlike those three, this section doesn't compute pass/fail at all (see
+  // zDropDimension.ts's own comment on why), so folding it into an aggregate pass/fail claim
+  // would assert something this app never actually checked.
+  if (inputs.zDropDimension?.table) {
+    lines.push("Z-Notch Drop:");
+    lines.push(
+      `- ${inputs.zDropDimension.table.sampleSize} bucket(s) measured — see the Z-Drop Dimensions section and review against its printed target directly.`
+    );
+    lines.push("");
+  } else if (inputs.zDropDimension?.hasPdf) {
+    lines.push("Z-Notch Drop:");
+    lines.push("- Reviewed via the completed form (see Z-Drop Dimensions section) — its data spreadsheet wasn't in a format this app could read automatically.");
+    lines.push("");
   }
 
   if (missing.length > 0) {
@@ -196,11 +266,20 @@ export function buildDimensionalSummaryDraft(tables: { heightDimForm?: ParsedTab
     lines.push("");
   }
 
-  lines.push(
-    flagged.length === 0
-      ? `All ${categoryCount} dimensional categor${categoryCount === 1 ? "y" : "ies"} inspected to date are within APG criteria.`
-      : `${flagged.length} of ${categoryCount} dimensional categories inspected show at least one reading outside APG criteria: ${flagged.join(", ")}. Overall repairability to be confirmed by the reviewing tech rep.`
-  );
+  if (categoryCount > 0) {
+    lines.push(
+      flagged.length === 0
+        ? `All ${categoryCount} dimensional categor${categoryCount === 1 ? "y" : "ies"} with a computed pass/fail ${categoryCount === 1 ? "is" : "are"} within APG criteria.`
+        : `${flagged.length} of ${categoryCount} dimensional categories with a computed pass/fail show at least one reading outside APG criteria: ${flagged.join(", ")}. Overall repairability to be confirmed by the reviewing tech rep.`
+    );
+  }
+  if (reviewedOnly.length > 0) {
+    lines.push(
+      `${reviewedOnly.join(", ")} ${
+        reviewedOnly.length === 1 ? "was" : "were"
+      } reviewed without an automatic pass/fail count (either no readable spreadsheet was found, or the form itself mixes more than one tolerance convention) — confirm directly against the completed form(s).`
+    );
+  }
   lines.push("");
   lines.push(STANDARD_PROCESS_LINES.dimensionalNote);
 
@@ -350,21 +429,44 @@ Present this as a clear, ordered checklist of the repair process from prep throu
 }
 
 export async function draftDimensionalSummary(
-  tables: { heightDimForm?: ParsedTable; dovetailDimension?: ParsedTable; wallThickness?: ParsedTable },
+  tables: { heightDimForm?: DimCategoryInput; dovetailDimension?: DimCategoryInput; zDropDimension?: DimCategoryInput; wallThickness?: DimCategoryInput },
   ctx: DraftContext
 ): Promise<string> {
   const categories: string[] = [];
 
-  if (tables.heightDimForm) {
-    for (const cat of heightCategoryBreakdown(tables.heightDimForm)) {
+  // A category available only via its print-ready PDF (see DimCategoryInput) has no parsed table
+  // to summarize -- say so plainly rather than omitting it outright, so the model doesn't draft
+  // this as if that inspection never happened.
+  const pdfOnlyNote = (label: string) => `Category "${label}": completed via the form on file, but its data spreadsheet wasn't in a format this app could read -- no count available, mention it was reviewed without asserting a pass/fail count.`;
+
+  // See buildDimensionalSummaryDraft's own comment: the 2nd/3rd-stage height-form strategy never
+  // computes pass/fail, and leaves outOfSpecCount undefined the same way every other "not
+  // computed" table in this app does -- checked here so it doesn't get read as "zero failures."
+  if (tables.heightDimForm?.table && tables.heightDimForm.table.outOfSpecCount !== undefined) {
+    for (const cat of heightCategoryBreakdown(tables.heightDimForm.table)) {
       categories.push(`Category "${cat.label} (${cat.letter})": ${cat.failCount} of ${cat.sampleSize} inspected buckets have at least one reading outside APG criteria.`);
     }
+  } else if (tables.heightDimForm?.table) {
+    categories.push(`Category "Heights":\n${tableSummary(tables.heightDimForm.table)}`);
+  } else if (tables.heightDimForm?.hasPdf) {
+    categories.push(pdfOnlyNote("Heights"));
   }
-  if (tables.dovetailDimension) {
-    categories.push(`Category "Root Serrations Dims":\n${tableSummary(tables.dovetailDimension)}`);
+  if (tables.dovetailDimension?.table) {
+    categories.push(`Category "Root Serrations Dims":\n${tableSummary(tables.dovetailDimension.table)}`);
+  } else if (tables.dovetailDimension?.hasPdf) {
+    categories.push(pdfOnlyNote("Root Serrations Dims"));
   }
-  if (tables.wallThickness) {
-    categories.push(`Category "UT Wall Thickness":\n${tableSummary(tables.wallThickness)}`);
+  if (tables.zDropDimension?.table) {
+    // Out-of-spec count is deliberately not computed for this one (see zDropDimension.ts) --
+    // tableSummary already renders that honestly as "not computed" rather than a fabricated 0.
+    categories.push(`Category "Z-Notch Drop" (2nd/3rd stage buckets only):\n${tableSummary(tables.zDropDimension.table)}`);
+  } else if (tables.zDropDimension?.hasPdf) {
+    categories.push(pdfOnlyNote("Z-Notch Drop"));
+  }
+  if (tables.wallThickness?.table) {
+    categories.push(`Category "UT Wall Thickness":\n${tableSummary(tables.wallThickness.table)}`);
+  } else if (tables.wallThickness?.hasPdf) {
+    categories.push(pdfOnlyNote("UT Wall Thickness"));
   }
 
   const prompt = withInstructionSuffix(
@@ -394,7 +496,7 @@ After all the category subheadings, add one closing paragraph stating the overal
  */
 export function buildIaSummaryDraft(params: {
   metadata: JobMetadata;
-  dimTables: { heightDimForm?: ParsedTable; dovetailDimension?: ParsedTable; wallThickness?: ParsedTable };
+  dimTables: { heightDimForm?: DimCategoryInput; dovetailDimension?: DimCategoryInput; zDropDimension?: DimCategoryInput; wallThickness?: DimCategoryInput };
   metSampleAvailable: boolean;
   crackMapAvailable: boolean;
 }): string {
@@ -423,10 +525,23 @@ export function buildIaSummaryDraft(params: {
   if (metadata.priorRepair) lines.push(`- Set was found with previous repair marking ${metadata.priorRepair}.`);
   lines.push("");
 
+  // A category with a parsed table gets its real sample size; one available only via its
+  // print-ready PDF (see DimCategoryInput) still gets listed as inspected -- it's genuinely in
+  // the report, this app just can't read a bucket count off it -- just without a count attached.
+  const dimBullet = (label: string, input?: DimCategoryInput): string | null => {
+    if (input?.table) return `- ${label} (${input.table.sampleSize} Buckets)`;
+    if (input?.hasPdf) return `- ${label}`;
+    return null;
+  };
   lines.push(`${STANDARD_PROCESS_LINES.sealStripRootGalling} Buckets were then dimensional inspected.`);
-  if (dimTables.heightDimForm) lines.push(`- Heights (${dimTables.heightDimForm.sampleSize} Buckets)`);
-  if (dimTables.dovetailDimension) lines.push(`- Root Dovetail (${dimTables.dovetailDimension.sampleSize} Buckets)`);
-  if (dimTables.wallThickness) lines.push(`- UT Wall Thickness (${dimTables.wallThickness.sampleSize} Buckets)`);
+  [
+    dimBullet("Heights", dimTables.heightDimForm),
+    dimBullet("Root Dovetail", dimTables.dovetailDimension),
+    dimBullet("Z-Notch Drop", dimTables.zDropDimension),
+    dimBullet("UT Wall Thickness", dimTables.wallThickness),
+  ]
+    .filter((b): b is string => b !== null)
+    .forEach((b) => lines.push(b));
   lines.push("");
 
   if (metSampleAvailable) {

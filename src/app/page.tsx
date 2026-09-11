@@ -8,6 +8,46 @@ import type { SectionState } from "@/lib/state/jobState";
 type SectionWithState = SectionScanResult & { state: SectionState };
 type ScanResponse = Omit<JobScanResult, "sections"> & { sections: SectionWithState[] };
 
+// Kept as a small literal here rather than importing from "@/lib/report-templates" -- this is a
+// client component, and the two ids are all it actually needs; resolving which real
+// ReportTemplate each one maps to happens entirely server-side (see resolveReportTemplate).
+type ReportTypeId = "ia" | "final";
+const REPORT_TYPE_OPTIONS: Array<{ id: ReportTypeId; label: string; description: string }> = [
+  {
+    id: "ia",
+    label: "I&A Report",
+    description: "Inspect & Advise — the incoming-inspection report a job starts with.",
+  },
+  {
+    id: "final",
+    label: "Final Report",
+    description: "The completion deliverable — largely the same sections as the I&A Report, plus a few more.",
+  },
+];
+
+function ReportTypePicker({ onChosen }: { onChosen: (id: ReportTypeId) => void }) {
+  return (
+    <div className="folder-picker">
+      <div className="app-logo">
+        <AppLogoMark />
+        <h1>Report Builder</h1>
+      </div>
+      <div className="app-logo-bar" />
+      <p className="folder-picker-subtitle">Which report are you building?</p>
+      <div className="folder-picker-card">
+        <div className="report-type-options">
+          {REPORT_TYPE_OPTIONS.map((opt) => (
+            <button key={opt.id} className="report-type-option" onClick={() => onChosen(opt.id)}>
+              <span className="report-type-option-label">{opt.label}</span>
+              <span className="report-type-option-description">{opt.description}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function StatusBadge({ status, acknowledged }: { status: string; acknowledged?: boolean }) {
   // "ready" means the data/draft is there, not that a person has looked at it — don't let that
   // read as done until the tech rep actually clicks "Tech Rep Reviewed". But once they do,
@@ -32,15 +72,59 @@ function FolderIcon() {
   );
 }
 
-function FolderPicker({ onJobFolderChosen }: { onJobFolderChosen: (path: string) => void }) {
+/** The APG mark, either plain (the usual static header) or `animated` -- a pale grayscale copy of
+ * the same image sits underneath a full-color copy whose clip-path is animated top-to-bottom on
+ * a loop, so color appears to "pour" down through the mark while a job is being scanned/drafted.
+ * Two copies of the same PNG rather than a real fill-percentage effect, since this is a fixed
+ * raster image (no path data to animate a stroke/fill along) and there's no real progress
+ * percentage to report anyway -- it's a "still working" indicator, not a progress bar. */
+function AppLogoMark({ animated }: { animated?: boolean }) {
+  if (!animated) {
+    return <img src="/apg-mark-transparent.png" alt="" className="app-logo-icon" />;
+  }
+  return (
+    <span className="app-logo-mark">
+      <img src="/apg-mark-transparent.png" alt="" className="app-logo-mark-img app-logo-mark-base" />
+      <img src="/apg-mark-transparent.png" alt="" className="app-logo-mark-img app-logo-mark-fill" />
+    </span>
+  );
+}
+
+// Matches the same sentinel in /api/browse's route -- requesting this "dir" returns the drives
+// list (Windows Explorer's "This PC") instead of a real folder's contents.
+const DRIVES_ROOT = "__DRIVES__";
+
+interface FolderSearchResult {
+  relativePath: string;
+  fullPath: string;
+}
+
+function FolderPicker({ onJobFolderChosen, onBack }: { onJobFolderChosen: (path: string) => void; onBack: () => void }) {
   const [dir, setDir] = useState<string | null>(null);
   const [folders, setFolders] = useState<string[]>([]);
   const [parent, setParent] = useState<string | null>(null);
+  const [isDriveList, setIsDriveList] = useState(false);
+  // Which quick-start tab is active -- purely a UI highlight, doesn't affect what gets fetched.
+  // Set on every explicit navigation, not just the two tab buttons, so "Up one level" out of a
+  // This-PC-rooted path (e.g. up from T:\ to the drives list) still shows "This PC" highlighted
+  // rather than silently reverting to "OneDrive".
+  const [source, setSource] = useState<"onedrive" | "thisPc">("onedrive");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
+  // Search state, separate from the normal single-level browsing above -- a query searches
+  // recursively downward from the current folder (see /api/browse's searchFolders) instead of
+  // just filtering what's already listed, since the whole point is finding a job folder buried
+  // a level or two down in a "massive" Working Jobs tree without knowing which bucket it's in.
+  const [query, setQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<FolderSearchResult[] | null>(null);
+  const [searchTruncated, setSearchTruncated] = useState(false);
+  const [searching, setSearching] = useState(false);
+
   const load = async (target?: string) => {
     setLoading(true);
+    setQuery("");
+    setSearchResults(null);
     try {
       const url = target ? `/api/browse?dir=${encodeURIComponent(target)}` : "/api/browse";
       const res = await fetch(url);
@@ -53,6 +137,8 @@ function FolderPicker({ onJobFolderChosen }: { onJobFolderChosen: (path: string)
       setDir(data.dir);
       setParent(data.parent);
       setFolders(data.folders);
+      setIsDriveList(!!data.isDriveList);
+      setSource(target === DRIVES_ROOT || data.isDriveList ? "thisPc" : target ? source : "onedrive");
     } finally {
       setLoading(false);
     }
@@ -65,20 +151,82 @@ function FolderPicker({ onJobFolderChosen }: { onJobFolderChosen: (path: string)
     load();
   }, []);
 
+  // Debounced so typing a full job number doesn't fire a recursive filesystem search per
+  // keystroke -- only once things settle for 300ms. Cleared (not searched) once the box is
+  // emptied, and this whole effect is skipped while browsing the drives list, which has no real
+  // `dir` to search under.
+  useEffect(() => {
+    if (!dir || isDriveList) return;
+    if (!query.trim()) {
+      setSearchResults(null);
+      setSearching(false);
+      return;
+    }
+    setSearching(true);
+    const handle = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/browse?dir=${encodeURIComponent(dir)}&q=${encodeURIComponent(query.trim())}`);
+        const data = await res.json();
+        if (res.ok) {
+          setSearchResults(data.results ?? []);
+          setSearchTruncated(!!data.truncated);
+        }
+      } finally {
+        setSearching(false);
+      }
+    }, 300);
+    return () => clearTimeout(handle);
+  }, [query, dir, isDriveList]);
+
+  const searchActive = searchResults !== null;
+
   return (
     <div className="folder-picker">
       <div className="app-logo">
-        <img src="/apg-mark-transparent.png" alt="" className="app-logo-icon" />
+        <AppLogoMark />
         <h1>Report Builder</h1>
       </div>
       <div className="app-logo-bar" />
       <p className="folder-picker-subtitle">Pick the job folder to scan.</p>
       <div className="folder-picker-card">
-        <p className="job-path">{dir}</p>
+        <div className="toolbar" style={{ marginBottom: 4 }}>
+          <button className="secondary" onClick={onBack}>
+            ← Change report type
+          </button>
+        </div>
+        {/* Two starting points, side by side -- OneDrive (the usual "Tech Rep Automation" job
+            folders) and This PC (any local or mapped network drive, e.g. a company T: drive)
+            -- rather than only ever starting from one default location. */}
+        <div className="folder-source-tabs">
+          <button className={`folder-source-tab ${source === "onedrive" ? "active" : ""}`} onClick={() => load()}>
+            ☁️ OneDrive
+          </button>
+          <button className={`folder-source-tab ${source === "thisPc" ? "active" : ""}`} onClick={() => load(DRIVES_ROOT)}>
+            💻 This PC
+          </button>
+        </div>
+        <p className="job-path">{isDriveList ? "This PC" : dir}</p>
         {error && (
           <p className="folder-picker-error" style={{ color: "#a4141a" }}>
             {error}
           </p>
+        )}
+        {!isDriveList && (
+          <div className="folder-search">
+            <input
+              type="text"
+              className="folder-search-input"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search job folders inside here…"
+            />
+            {query && (
+              <button className="folder-search-clear" onClick={() => setQuery("")} aria-label="Clear search">
+                ✕
+              </button>
+            )}
+            {searching && <span className="folder-search-status">Searching…</span>}
+          </div>
         )}
         <div className="toolbar">
           <button className="secondary" disabled={!parent} onClick={() => parent && load(parent)}>
@@ -86,14 +234,31 @@ function FolderPicker({ onJobFolderChosen }: { onJobFolderChosen: (path: string)
           </button>
           {dir && <button onClick={() => onJobFolderChosen(dir)}>Use this folder</button>}
         </div>
-        {loading ? (
+        {searchActive ? (
+          searchResults && searchResults.length === 0 ? (
+            <div className="folder-list-empty">No folders matching &quot;{query}&quot; found inside here.</div>
+          ) : (
+            <>
+              <div className="folder-list folder-list-enter" key="search">
+                {(searchResults ?? []).map((r) => (
+                  <button key={r.fullPath} onClick={() => load(r.fullPath)}>
+                    <FolderIcon /> {r.relativePath}
+                  </button>
+                ))}
+              </div>
+              {searchTruncated && (
+                <p className="folder-search-hint">Showing the first {searchResults?.length} matches — narrow your search for more precise results.</p>
+              )}
+            </>
+          )
+        ) : loading ? (
           <div className="folder-list-loading">Loading…</div>
         ) : folders.length === 0 ? (
-          <div className="folder-list-empty">No subfolders here.</div>
+          <div className="folder-list-empty">{isDriveList ? "No drives found." : "No subfolders here."}</div>
         ) : (
           <div className="folder-list folder-list-enter" key={dir ?? "root"}>
             {folders.map((f) => (
-              <button key={f} onClick={() => load(dir ? `${dir}\\${f}` : f)}>
+              <button key={f} onClick={() => load(isDriveList ? f : dir ? `${dir.replace(/\\$/, "")}\\${f}` : f)}>
                 <FolderIcon /> {f}
               </button>
             ))}
@@ -111,14 +276,56 @@ function chunkRows<T>(rows: T[], numChunks: number): T[][] {
   return chunks;
 }
 
-// Sections where the tech rep can manually attach a file the automatic matching didn't find --
-// see ManualAttachmentUpload and scanJobFolder.ts's manualAttachmentsFor. Deliberately not every
-// file-backed section: the ones left out either don't make sense to hand-attach (Photo Set is a
-// multi-file selection, not one exhibit) or the request that added this was scoped to just these
-// five.
-const MANUAL_ATTACHMENT_SECTIONS = new Set(["chemTest", "heightDimForm", "dovetailDimension", "wallThickness", "metallurgicalReport"]);
+// Sections where the tech rep can manually attach a file -- always available, not just when
+// automatic matching found nothing, since a confident-looking match can still be the wrong file
+// (see ManualAttachmentUpload and scanJobFolder.ts's manualAttachmentsFor). Deliberately not every
+// file-backed section: Photo Set is a multi-file selection, not one exhibit, so hand-attaching a
+// single file there doesn't make sense the same way. Scrap Report / SN Recording Sheet normally
+// read a tab out of the Serial Number List workbook rather than a standalone file, but a manually
+// attached PDF still works for them -- it's treated as the real, standalone print-ready export of
+// that tab (see scanJobFolder.ts's OPTIONAL_SUBSHEET_PARSERS handling of manualPdf) and embedded
+// outright, overriding whatever the xlsx tab itself parsed to.
+const MANUAL_ATTACHMENT_SECTIONS = new Set([
+  "chemTest",
+  "crackMap",
+  "serialNumberList",
+  "scrapReport",
+  "snRecordingSheet",
+  "heightDimForm",
+  "dovetailDimension",
+  "zDropDimension",
+  "wallThickness",
+  "metallurgicalReport",
+  "airflowReport",
+  // Final Report's own sections -- same reasoning as their I&A counterparts above.
+  "finalSerialNumberList",
+  "finalScrapReport",
+  "finalSnRecordingSheet",
+  "finalHeightDimForm",
+  "finalWallThickness",
+  "finalAirflowReport",
+  "preWeldHeatTreatChart",
+  "postWeldHeatTreatChart",
+  "xRayInspection",
+  "postCoatHeatTreatChart",
+  "finalAgeHeatTreatChart",
+  "coatingCertification",
+  "shotPeenAlSealStripCert",
+  "damperPinCheck",
+  "finalMomentWeigh",
+]);
 
-function ManualAttachmentUpload({ jobRoot, sectionId, onUploaded }: { jobRoot: string; sectionId: string; onUploaded: () => void }) {
+function ManualAttachmentUpload({
+  jobRoot,
+  sectionId,
+  onUploaded,
+  hint,
+}: {
+  jobRoot: string;
+  sectionId: string;
+  onUploaded: () => void;
+  hint?: string;
+}) {
   const [busy, setBusy] = useState(false);
   const inputId = `manual-attach-${sectionId}`;
 
@@ -159,36 +366,112 @@ function ManualAttachmentUpload({ jobRoot, sectionId, onUploaded }: { jobRoot: s
       <label htmlFor={inputId} className={`manual-attachment-btn ${busy ? "busy" : ""}`}>
         📎 {busy ? "Uploading…" : "Insert file manually"}
       </label>
-      <p className="manual-attachment-hint">Didn&apos;t find it automatically? If you have this file somewhere else on your computer, attach it here.</p>
+      <p className="manual-attachment-hint">{hint ?? "Didn't find it automatically? If you have this file somewhere else on your computer, attach it here."}</p>
     </div>
   );
 }
 
 function TablePreview({ jobRoot, section, onRefresh }: { jobRoot: string; section: SectionWithState; onRefresh: () => void }) {
   const table = section.parsedTable;
+  // Keyed "<row index>:<column name>" against the table's own row order -- see
+  // SectionState.tableEdits / applyTableEdits. Local state so typing doesn't round-trip to the
+  // server on every keystroke; an explicit Save persists it (same pattern as CoverEditor).
+  const [edits, setEdits] = useState<Record<string, string>>(section.state.tableEdits ?? {});
+  const [notesText, setNotesText] = useState(section.state.tableNotes ?? "");
+  const [busy, setBusy] = useState(false);
+  const [dirty, setDirty] = useState(false);
+
+  // Always available, even when a good match (a parsed table and/or a print-ready PDF) was
+  // already found -- automatic matching can still land on the wrong file, so the tech rep always
+  // has a direct way to swap in a different one, not only when nothing was found at all.
+  const insertFile = MANUAL_ATTACHMENT_SECTIONS.has(section.id) && (
+    <ManualAttachmentUpload
+      jobRoot={jobRoot}
+      sectionId={section.id}
+      onUploaded={onRefresh}
+      hint={table || section.printPdfFile ? "Not the right file? Insert a different one manually here." : undefined}
+    />
+  );
+
   if (!table) {
     // No data spreadsheet to show as a table, but the completed print-ready PDF was found (see
     // scanJobFolder.ts's PRINT_PDF_SECTIONS) and is what the report actually uses -- the
-    // statusReason above this already explains that, so don't also claim there's "no data".
-    if (section.printPdfFile) return null;
+    // statusReason above this already explains that, so don't also claim there's "no data", just
+    // still offer a way to swap that PDF for a different one.
+    if (section.printPdfFile) return <div>{insertFile}</div>;
     return (
       <div>
         <p className="section-reason">No table data available.</p>
-        {MANUAL_ATTACHMENT_SECTIONS.has(section.id) && <ManualAttachmentUpload jobRoot={jobRoot} sectionId={section.id} onUploaded={onRefresh} />}
+        {insertFile}
       </div>
     );
   }
+
+  // A genuinely empty table (Scrap Report / SN Recording Sheet with nothing recorded for this
+  // job yet) -- an empty grid with headers and no rows reads as broken, not "nothing to report".
+  // table.notes already carries a plain-English explanation for exactly this case.
+  if (table.rows.length === 0 && (table.summaryRows ?? []).length === 0) {
+    return (
+      <div>
+        {table.notes.map((n, i) => (
+          <p key={i} className="section-reason">
+            {n}
+          </p>
+        ))}
+        {insertFile}
+      </div>
+    );
+  }
+
+  const cellValue = (rowIndex: number, col: string, raw: string) => edits[`${rowIndex}:${col}`] ?? raw ?? "";
+
+  const editCell = (rowIndex: number, col: string, value: string) => {
+    setEdits((prev) => ({ ...prev, [`${rowIndex}:${col}`]: value }));
+    setDirty(true);
+  };
+
+  const save = async () => {
+    setBusy(true);
+    try {
+      await fetch("/api/section-state", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jobRoot, sectionId: section.id, patch: { tableEdits: edits, tableNotes: notesText } }),
+      });
+      setDirty(false);
+    } finally {
+      setBusy(false);
+    }
+  };
 
   // Serial Number List is a long, simple 3-column list (matching the real DS-0554 form, which
   // itself lays it out as three parallel column blocks) -- reflowing it the same way here keeps
   // the on-screen review matching what actually prints, instead of one tall single column.
   const columnBlocks = section.id === "serialNumberList" && table.rows.length > 3 ? 3 : 1;
+  // chunkRows slices rows into sequential ranges (chunk 0 = rows[0..perChunk-1], chunk 1 =
+  // rows[perChunk..2*perChunk-1], ...), so a row's real index -- the one edits are keyed
+  // against -- is derivable from its chunk and its position within it, without chunkRows itself
+  // needing to carry indices through.
+  const perChunk = Math.ceil(table.rows.length / columnBlocks);
 
-  const headerCells = table.columns.map((c) => (
-    <th key={c} data-col={c}>
+  // Keyed by column index, not the column name itself -- a source form's own header row can
+  // repeat or leave blank a label (confirmed on a real job: a wall-thickness form variant with an
+  // unlabeled/merged header cell produced two blank column names), and React requires unique keys
+  // regardless of what the underlying data looks like.
+  const headerCells = table.columns.map((c, ci) => (
+    <th key={ci} data-col={c}>
       {c}
     </th>
   ));
+
+  const editableCell = (rowIndex: number, c: string, row: Record<string, string>, colIndex: number) => {
+    const value = cellValue(rowIndex, c, row[c]);
+    return (
+      <td key={colIndex} data-col={c} className={value.includes("OUT OF SPEC") ? "fail" : ""}>
+        <input type="text" className="table-cell-input" value={value} onChange={(e) => editCell(rowIndex, c, e.target.value)} />
+      </td>
+    );
+  };
 
   return (
     <div style={{ overflowX: "auto" }}>
@@ -197,6 +480,7 @@ function TablePreview({ jobRoot, section, onRefresh }: { jobRoot: string; sectio
         {table.populationSize ? ` of ${table.populationSize}` : ""}
         {typeof table.outOfSpecCount === "number" ? ` — ${table.outOfSpecCount} out of spec` : ""}
       </p>
+      <p className="file-count">Click any cell to correct it — a typo'd serial, a re-measured value. Save when you're done.</p>
       {table.notes.map((n, i) => (
         <p key={i} className="confidence-note">
           {n}
@@ -219,15 +503,10 @@ function TablePreview({ jobRoot, section, onRefresh }: { jobRoot: string; sectio
                 <tr>{headerCells}</tr>
               </thead>
               <tbody>
-                {rowsChunk.map((row, i) => (
-                  <tr key={i}>
-                    {table.columns.map((c) => (
-                      <td key={c} data-col={c} className={row[c]?.includes("OUT OF SPEC") ? "fail" : ""}>
-                        {row[c]}
-                      </td>
-                    ))}
-                  </tr>
-                ))}
+                {rowsChunk.map((row, i) => {
+                  const rowIndex = blockIdx * perChunk + i;
+                  return <tr key={rowIndex}>{table.columns.map((c, ci) => editableCell(rowIndex, c, row, ci))}</tr>;
+                })}
               </tbody>
             </table>
           ))}
@@ -239,18 +518,12 @@ function TablePreview({ jobRoot, section, onRefresh }: { jobRoot: string; sectio
           </thead>
           <tbody>
             {table.rows.map((row, i) => (
-              <tr key={i}>
-                {table.columns.map((c) => (
-                  <td key={c} data-col={c} className={row[c]?.includes("OUT OF SPEC") ? "fail" : ""}>
-                    {row[c]}
-                  </td>
-                ))}
-              </tr>
+              <tr key={i}>{table.columns.map((c, ci) => editableCell(i, c, row, ci))}</tr>
             ))}
             {(table.summaryRows ?? []).map((row, i) => (
               <tr key={`summary-${i}`} style={{ fontWeight: 700, background: "#f0f0f0" }}>
-                {table.columns.map((c) => (
-                  <td key={c} data-col={c}>
+                {table.columns.map((c, ci) => (
+                  <td key={ci} data-col={c}>
                     {row[c]}
                   </td>
                 ))}
@@ -262,8 +535,23 @@ function TablePreview({ jobRoot, section, onRefresh }: { jobRoot: string; sectio
       {table.hasNotesBox && (
         <div className="form-notes-box">
           <span className="form-notes-label">NOTES:</span>
+          <textarea
+            className="form-notes-input"
+            value={notesText}
+            onChange={(e) => {
+              setNotesText(e.target.value);
+              setDirty(true);
+            }}
+            placeholder="Type any remarks here — same as writing on the paper form."
+          />
         </div>
       )}
+      <div className="toolbar">
+        <button disabled={busy || !dirty} onClick={save}>
+          {busy ? "Saving..." : dirty ? "Save changes" : "Saved"}
+        </button>
+      </div>
+      {insertFile}
     </div>
   );
 }
@@ -272,10 +560,12 @@ function NarrativeEditor({
   jobRoot,
   section,
   onUpdated,
+  turbineModel,
 }: {
   jobRoot: string;
   section: SectionWithState;
   onUpdated: (content: string) => void;
+  turbineModel: string;
 }) {
   // Keyed by section.id in SectionPanel below, so this remounts (and re-derives its initial
   // state from `section`) whenever the reviewer switches sections — no sync effect needed.
@@ -342,6 +632,60 @@ function NarrativeEditor({
           Revise with instruction
         </button>
       </div>
+      {section.id === "iaSummary" && <StandardDiagramToggle jobRoot={jobRoot} section={section} turbineModel={turbineModel} />}
+    </div>
+  );
+}
+
+// Every real 7FA I&A report includes the same fixed reference diagram on its Engineering Summary
+// page (see renderReportHtml.ts's renderStandardDiagram) -- this mirrors that same 7FA check so
+// the toggle only shows up on the jobs it actually applies to.
+const SEVEN_FA_PATTERN = /^F?7FA/i;
+
+/** Lets the tech rep turn APG's standard 7FA modification-reference diagram on or off for this
+ * job's I&A Summary page. On by default for any 7FA job (matching the real completed report,
+ * which always includes it) -- this is a fixed illustration, not one of the job's own photos, so
+ * there's nothing to pick, just whether to include it. */
+function StandardDiagramToggle({ jobRoot, section, turbineModel }: { jobRoot: string; section: SectionWithState; turbineModel: string }) {
+  const isSevenFA = SEVEN_FA_PATTERN.test(turbineModel.trim());
+  // Keyed by section.id in SectionPanel below, so a section switch remounts this fresh.
+  const [included, setIncluded] = useState(section.state.includeStandardDiagram ?? isSevenFA);
+  const [busy, setBusy] = useState(false);
+
+  if (!isSevenFA) return null;
+
+  const toggle = async () => {
+    const next = !included;
+    setIncluded(next);
+    setBusy(true);
+    try {
+      await fetch("/api/section-state", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jobRoot, sectionId: "iaSummary", patch: { includeStandardDiagram: next } }),
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="standard-diagram-toggle">
+      <h3 style={{ fontSize: 14, margin: "20px 0 4px" }}>Standard 7FA Reference Diagram</h3>
+      <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: busy ? "default" : "pointer" }}>
+        <input type="checkbox" checked={included} disabled={busy} onChange={toggle} />
+        <span className="file-count" style={{ margin: 0 }}>
+          Include APG&apos;s standard 7FA modification-reference diagram on this page — every 7FA report includes it by
+          default; uncheck to leave it out for this job.
+        </span>
+      </label>
+      {included && (
+        <img
+          src="/reference/7fa-modification-diagram.png"
+          alt="Standard 7FA modification-reference diagram"
+          style={{ maxWidth: 320, marginTop: 8, border: "1px solid #ccc", borderRadius: 4 }}
+        />
+      )}
     </div>
   );
 }
@@ -481,21 +825,44 @@ function AttachAsIs({ jobRoot, section, onRefresh }: { jobRoot: string; section:
 
   if (candidates.length === 1) {
     return (
-      <div className="section-reason">
-        <p>
+      <div>
+        <p className="section-reason">
           Attached as-is: <strong>{candidates[0].relativePath}</strong>
         </p>
+        {/* Always available, even for a confident filename match -- automatic matching can still
+            pick the wrong file (confirmed on a real job: a Purchase Requisition happened to match
+            the Chem Test filename pattern while the real vendor certificate sat under a generic
+            scanner filename elsewhere), so the tech rep always has a direct way to override it,
+            not only when the match already reads as uncertain. */}
+        {MANUAL_ATTACHMENT_SECTIONS.has(section.id) && (
+          <ManualAttachmentUpload
+            jobRoot={jobRoot}
+            sectionId={section.id}
+            onUploaded={onRefresh}
+            hint="Not the right file? Insert a different one manually here."
+          />
+        )}
       </div>
     );
   }
 
+  // What the preview panel shows: whichever candidate the cursor is directly over, or (the vast
+  // majority of the time) your actual pick. Previously this fell back to nothing at all once the
+  // cursor left a candidate row, which meant moving the mouse down toward the preview itself --
+  // or anywhere else past the candidate list -- left the last-hovered row "stuck" as the preview,
+  // even though the cursor was no longer anywhere near it. Falling back to `selected` instead of
+  // `undefined`, and clearing `hovered` the moment the cursor leaves a given row (not just the
+  // whole picker), means the preview always reads as "what's actually selected" the instant
+  // you're not deliberately pointing at a different candidate to compare it.
+  const previewTarget = hovered ?? selected;
+
   return (
     <div>
       <p className="section-reason">
-        {candidates.length} files matched this section&apos;s naming pattern — pick which one is actually the real exhibit. Your pick is what
-        gets attached to the generated report. Hover a file to preview it.
+        {candidates.length} files could be this section&apos;s real exhibit — pick which one is actually correct. Your pick is what gets attached
+        to the generated report. Hover a file to preview it.
       </p>
-      <div className="attachment-picker" onMouseLeave={() => setHovered(undefined)}>
+      <div className="attachment-picker">
         <div className="attachment-candidates">
           {candidates.map((f) => (
             <button
@@ -503,17 +870,22 @@ function AttachAsIs({ jobRoot, section, onRefresh }: { jobRoot: string; section:
               className={`attachment-candidate ${selected === f.relativePath ? "selected" : ""}`}
               onClick={() => choose(f.relativePath)}
               onMouseEnter={() => setHovered(f.relativePath)}
+              onMouseLeave={() => setHovered(undefined)}
             >
               {f.relativePath}
             </button>
           ))}
         </div>
-        {hovered && (
+        {previewTarget && (
           <div className="attachment-preview">
-            <iframe key={hovered} src={fileUrl(hovered)} title={hovered} />
+            <iframe key={previewTarget} src={fileUrl(previewTarget)} title={previewTarget} />
           </div>
         )}
       </div>
+      {/* Escape hatch for when none of the candidates above are actually right. */}
+      {MANUAL_ATTACHMENT_SECTIONS.has(section.id) && (
+        <ManualAttachmentUpload jobRoot={jobRoot} sectionId={section.id} onUploaded={onRefresh} />
+      )}
     </div>
   );
 }
@@ -606,7 +978,13 @@ function SectionPanel({
           that appeared behind it, so the box kept showing "no draft yet" until the reviewer
           clicked to a different section and back. */}
       {section.generation === "llm-narrative" && (
-        <NarrativeEditor key={`${section.id}-${section.state.lastGeneratedAt ?? ""}`} jobRoot={jobRoot} section={section} onUpdated={onRefresh} />
+        <NarrativeEditor
+          key={`${section.id}-${section.state.lastGeneratedAt ?? ""}`}
+          jobRoot={jobRoot}
+          section={section}
+          onUpdated={onRefresh}
+          turbineModel={metadata.turbineModel}
+        />
       )}
       {section.generation === "table-from-source" && <TablePreview key={section.id} jobRoot={jobRoot} section={section} onRefresh={onRefresh} />}
       {section.generation === "llm-vision-select" && <PhotoSetEditor key={section.id} jobRoot={jobRoot} section={section} />}
@@ -617,6 +995,7 @@ function SectionPanel({
 }
 
 export default function Home() {
+  const [reportType, setReportType] = useState<ReportTypeId | null>(null);
   const [jobRoot, setJobRoot] = useState<string | null>(null);
   const [scan, setScan] = useState<ScanResponse | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -629,7 +1008,7 @@ export default function Home() {
       const res = await fetch("/api/scan", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ jobRoot: root }),
+        body: JSON.stringify({ jobRoot: root, reportType }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
@@ -674,7 +1053,7 @@ export default function Home() {
       const res = await fetch("/api/generate-pdf", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ jobRoot }),
+        body: JSON.stringify({ jobRoot, reportType }),
       });
       if (!res.ok) {
         const data = await res.json();
@@ -684,9 +1063,17 @@ export default function Home() {
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `${scan?.metadata.jobNumber ?? "report"}-IA-Report.pdf`;
+      a.download = `${scan?.metadata.jobNumber ?? "report"}-${reportType === "final" ? "Final" : "IA"}-Report.pdf`;
+      // Appended to the DOM (some browsers won't fire the download from a detached anchor) and the
+      // object URL is kept alive for a beat after the click instead of revoked immediately -- a
+      // Final Report's PDF runs several MB (all those inline exhibits/photos), and revoking
+      // synchronously raced the browser's own read of the blob on exactly that larger file, so it
+      // reported a "saved" download that was actually truncated and wouldn't open. The I&A Report's
+      // smaller PDF rarely hit the race, which is why this only showed up on Final Reports.
+      document.body.appendChild(a);
       a.click();
-      URL.revokeObjectURL(url);
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 30_000);
     } catch (e) {
       alert(e instanceof Error ? e.message : "PDF generation failed");
     } finally {
@@ -694,15 +1081,22 @@ export default function Home() {
     }
   };
 
+  // Which report to build is chosen once, up front -- before a job folder is even picked -- so
+  // every request from here on (scan, draft, generate) already knows which section list to use
+  // instead of assuming I&A Report by default.
+  if (!reportType) {
+    return <ReportTypePicker onChosen={setReportType} />;
+  }
+
   if (!jobRoot) {
-    return <FolderPicker onJobFolderChosen={chooseFolder} />;
+    return <FolderPicker onJobFolderChosen={chooseFolder} onBack={() => setReportType(null)} />;
   }
 
   if (!scan) {
     return (
       <div className="folder-picker">
         <div className="app-logo">
-          <img src="/apg-mark-transparent.png" alt="" className="app-logo-icon" />
+          <AppLogoMark animated={loading} />
           <h1>Report Builder</h1>
         </div>
         <div className="app-logo-bar" />
@@ -726,6 +1120,16 @@ export default function Home() {
   return (
     <div className="app-shell">
       <header className="app-header">
+        <button
+          className="secondary"
+          title="Start over with a different report type"
+          onClick={() => {
+            setReportType(null);
+            setJobRoot(null);
+          }}
+        >
+          {REPORT_TYPE_OPTIONS.find((o) => o.id === reportType)?.label ?? "Report type"}
+        </button>
         <button className="secondary" onClick={() => setJobRoot(null)}>
           ← Change folder
         </button>
@@ -770,6 +1174,19 @@ export default function Home() {
           {generating ? "Generating..." : "Generate Report"}
         </button>
       </footer>
+      {/* Same fill-loop mark as the initial job-scan screen, in an overlay rather than a full
+          page swap -- assembling the final PDF (rendering every section, copying in real exhibit
+          pages) takes a few seconds to over a minute depending on the job, and the tech rep
+          shouldn't lose their place in the review screen underneath while it runs. */}
+      {generating && (
+        <div className="generating-overlay">
+          <div className="generating-overlay-card">
+            <AppLogoMark animated />
+            <p className="generating-overlay-text">Generating report…</p>
+            <p className="generating-overlay-hint">Assembling every section and exhibit into the final PDF.</p>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

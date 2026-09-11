@@ -1,7 +1,16 @@
-import type { JobScanResult } from "../ingest/scanJobFolder";
+import type { JobScanResult, SectionScanResult } from "../ingest/scanJobFolder";
 import { loadJobState, updateSectionStates, type SectionState } from "../state/jobState";
-import { buildFpiVisualDraft, buildRecommendedRepairsDraft, buildDimensionalSummaryDraft, buildIaSummaryDraft } from "./narrative";
+import { buildFpiVisualDraft, buildRecommendedRepairsDraft, buildDimensionalSummaryDraft, buildIaSummaryDraft, type DimCategoryInput } from "./narrative";
 import { selectBestPhotos } from "./photoSelect";
+
+/** A dimensional category's source for the narrative builders -- its parsed table when readable,
+ * plus whether a print-ready PDF of the real form exists regardless (see DimCategoryInput's own
+ * comment for why that second part matters: a section can be "ready" off its PDF alone with no
+ * readable spreadsheet at all, and the narrative needs to know that to avoid calling it missing). */
+function dimInput(section: SectionScanResult | undefined): DimCategoryInput | undefined {
+  if (!section) return undefined;
+  return { table: section.parsedTable, hasPdf: Boolean(section.printPdfFile) };
+}
 
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : "Automatic draft generation failed.";
@@ -68,11 +77,13 @@ export async function autoDraftJob(scan: JobScanResult): Promise<void> {
   }
 
   const dimTables = {
-    heightDimForm: bySectionId.get("heightDimForm")?.parsedTable,
-    dovetailDimension: bySectionId.get("dovetailDimension")?.parsedTable,
-    wallThickness: bySectionId.get("wallThickness")?.parsedTable,
+    heightDimForm: dimInput(bySectionId.get("heightDimForm")),
+    dovetailDimension: dimInput(bySectionId.get("dovetailDimension")),
+    zDropDimension: dimInput(bySectionId.get("zDropDimension")),
+    wallThickness: dimInput(bySectionId.get("wallThickness")),
   };
-  if (dimTables.heightDimForm || dimTables.dovetailDimension || dimTables.wallThickness) {
+  const anyDimAvailable = Object.values(dimTables).some((d) => d?.table || d?.hasPdf);
+  if (anyDimAvailable) {
     // Runs on whatever tables exist, even just one of the three, and says so in the draft itself
     // rather than waiting for all of them.
     if (isUntouched("dimensionalSummary")) {
@@ -98,20 +109,27 @@ export async function autoDraftJob(scan: JobScanResult): Promise<void> {
     jobs.push(missingDataStep("iaSummary", "No job number could be resolved for this folder — draft this section manually."));
   }
 
-  const photoSection = bySectionId.get("photoSet");
-  if (photoSection && photoSection.matchedFiles.length > 0) {
-    if (isUntouched("photoSet")) {
-      jobs.push(
-        selectBestPhotos(photoSection.matchedFiles)
-          .then((result): PatchEntry => [
-            "photoSet",
-            { selectedPhotoPaths: result.includedPaths, content: result.raw, draftError: undefined, lastGeneratedAt: stamp() },
-          ])
-          .catch((err): PatchEntry => ["photoSet", { draftError: errorMessage(err) }])
-      );
+  // Whichever photo-set section this report template actually has -- the I&A Report's own
+  // "photoSet" (incoming-stage photos) or the Final Report's "finalPhotoSet" (final-stage) -- see
+  // selectBestPhotos' preferredStage param. A template only ever has one of the two, so this
+  // isn't a collision, just picking the right stage preference for whichever is present.
+  for (const [id, preferredStage] of [
+    ["photoSet", "incoming"],
+    ["finalPhotoSet", "final"],
+  ] as const) {
+    const photoSection = bySectionId.get(id);
+    if (!photoSection) continue;
+    if (photoSection.matchedFiles.length > 0) {
+      if (isUntouched(id)) {
+        jobs.push(
+          selectBestPhotos(photoSection.matchedFiles, preferredStage)
+            .then((result): PatchEntry => [id, { selectedPhotoPaths: result.includedPaths, content: result.raw, draftError: undefined, lastGeneratedAt: stamp() }])
+            .catch((err): PatchEntry => [id, { draftError: errorMessage(err) }])
+        );
+      }
+    } else {
+      jobs.push(missingDataStep(id, "No photo folder was found for this job."));
     }
-  } else {
-    jobs.push(missingDataStep("photoSet", "No photo folder was found for this job."));
   }
 
   const results = await Promise.all(jobs);

@@ -6,11 +6,17 @@ import { resolveJobMetadata, type JobMetadata } from "./jobMetadata";
 import { parseSerialNumberList } from "./parsers/serialNumberList";
 import { parseHeightDimForm, HEIGHT_DIM_FORM_SHEET_PATTERN } from "./parsers/heightDimForm";
 import { parseDovetailDimension, DOVETAIL_SHEET_PATTERN } from "./parsers/dovetailDimension";
+import { parseZDropDimension, Z_DROP_SHEET_PATTERN } from "./parsers/zDropDimension";
 import { parseWallThickness, WALL_THICKNESS_SHEET_PATTERN } from "./parsers/wallThickness";
+import { parseScrapReport } from "./parsers/scrapReport";
+import { parseSNRecordingSheet } from "./parsers/snRecordingSheet";
+import { parseAirflowReport, AIRFLOW_SHEET_PATTERN } from "./parsers/airflowReport";
 import { parseRouter, type ParsedRouter } from "./parsers/router";
+import { parseRepairCds } from "./parsers/repairCds";
 import { extractEmbeddedPhotos } from "./parsers/photoTemplatePdf";
 import { xlsxHasEmbeddedImages, renderXlsxSheetToPdf } from "./parsers/xlsxToPdf";
 import type { ParsedTable } from "./parsers/types";
+import { identifyByContent } from "./contentIdentify";
 
 export type SectionStatus = "ready" | "needs-attention" | "missing";
 
@@ -45,17 +51,91 @@ const TABLE_PARSERS: Record<string, (path: string) => Promise<ParsedTable | null
   serialNumberList: parseSerialNumberList,
   heightDimForm: parseHeightDimForm,
   dovetailDimension: parseDovetailDimension,
+  zDropDimension: parseZDropDimension,
   wallThickness: parseWallThickness,
+  airflowReport: parseAirflowReport,
+  // Final Report's own dimensional re-checks -- same real form, same layout, just the
+  // post-repair/final-stage workbook instead of the incoming one (confirmed against Job 18664:
+  // "Final UT.xlsx" is the exact same "DS-0007 FA R1 wall thickness" sheet parseWallThickness
+  // already handles, "Total Flow.xlsx" the exact same "Airflow Rpt" sheet parseAirflowReport
+  // already handles, and "...heights FINAL.xlsx" the same APG#-anchored layout
+  // parseHeightDimForm's content-based strategy already finds regardless of sheet name) -- no new
+  // parsing logic needed, just a second section id pointed at the final-stage file.
+  finalHeightDimForm: parseHeightDimForm,
+  finalWallThickness: parseWallThickness,
+  finalAirflowReport: parseAirflowReport,
+  // Final Report's own as-shipped Serial Number List -- same DS-0554 sheet layout as the I&A
+  // Report's own serialNumberList, just the final-stage workbook (see finalSerialNumberList's own
+  // comment in final-report.ts). Missed on the first pass -- without this, the section matched its
+  // file and showed "ready" from the generic fallback below, but rendered as an empty table since
+  // nothing had actually parsed it (caught via a real PDF-outline diff against Job 18664).
+  finalSerialNumberList: parseSerialNumberList,
+};
+
+// Sub-tabs of the SAME Serial Number List workbook serialNumberList already parses (see
+// scrapReport.ts / snRecordingSheet.ts) -- matched by the same sourceRules/candidate file as
+// that section, just reading a different sheet. Handled separately from TABLE_PARSERS above
+// because a zero-row result from either of these is a real, honest answer (nothing scrapped,
+// no prior history recorded) rather than a parsing failure -- TABLE_PARSERS' own loop treats
+// zero rows as "try the next candidate, then fall back to needs-attention," which would be the
+// wrong read here.
+const OPTIONAL_SUBSHEET_PARSERS: Record<string, (path: string) => Promise<ParsedTable | null>> = {
+  scrapReport: parseScrapReport,
+  snRecordingSheet: parseSNRecordingSheet,
+  // Final Report's own scrap/prior-history tabs -- confirmed against Job 18664: the "Final Ship
+  // SN List" / "Final Scrap SN List" workbooks carry the exact same "DS-0554 serial number
+  // sheet" / "DS-0404 SN Recording Sheet" / "DS-0554 Blade Bucket scrap" tabs as the incoming
+  // workbook, just for the final/as-shipped set.
+  finalScrapReport: parseScrapReport,
+  finalSnRecordingSheet: parseSNRecordingSheet,
 };
 
 const ROUTER_SECTIONS = new Set(["fpiVisual", "recommendedRepairs"]);
-const ATTACH_AS_IS_NO_PARSE = new Set(["chemTest", "crackMap", "metallurgicalReport"]);
+// Sections that are just a real, completed exhibit slotted in verbatim -- no data to parse out of
+// them at all, only a file to find (see ATTACH_AS_IS_NO_PARSE's own handling below). The Final
+// Report ones (confirmed against Job 18664) are each their own standalone certification/checklist
+// document, not something this app re-derives from source data the way the dimensional forms are.
+const ATTACH_AS_IS_NO_PARSE = new Set([
+  "chemTest",
+  "crackMap",
+  "metallurgicalReport",
+  "preWeldHeatTreatChart",
+  "postWeldHeatTreatChart",
+  "postCoatHeatTreatChart",
+  "finalAgeHeatTreatChart",
+  "xRayInspection",
+  "coatingCertification",
+  "shotPeenAlSealStripCert",
+  "damperPinCheck",
+  "finalMomentWeigh",
+]);
+
+// File types identifyByContent can actually be handed (a PDF as Claude's native document block,
+// an image as a normal vision image block) when falling back to content-based identification.
+const CONTENT_SCAN_EXTENSIONS = new Set([".pdf", ".jpg", ".jpeg", ".png"]);
+// Where these exhibits actually turn up in practice (see chemTest's own preferFolder, and the
+// same reasoning) -- tried first, not exclusively, so a job that keeps its paperwork somewhere
+// else entirely still gets searched, just after the likelier spots.
+const LIKELY_EXHIBIT_FOLDER = /reports|qa/i;
 
 /** These forms exist on disk twice: an .xlsx we parse for data (dimensional pass/fail, the
  * sample size other narrative sections reference) and a completed, print-ready PDF of the exact
  * same form -- diagrams, colored callouts, and all. Serial Number List is deliberately excluded:
- * that one's report presentation is this app's own header/notes-box layout, not a PDF swap. */
-const PRINT_PDF_SECTIONS = new Set(["heightDimForm", "dovetailDimension", "wallThickness"]);
+ * that one's report presentation is this app's own header/notes-box layout, not a PDF swap.
+ * Airflow Report works the same way -- its own "Total Airflow ( Incoming )" PDF, when found, is
+ * what the generated report actually embeds; the parsed table below is just the review preview.
+ * Z-Drop Dimensions (2nd/3rd stage buckets only, no 1st-stage equivalent -- see
+ * zDropDimension.ts) follows the same pattern. */
+const PRINT_PDF_SECTIONS = new Set([
+  "heightDimForm",
+  "dovetailDimension",
+  "zDropDimension",
+  "wallThickness",
+  "airflowReport",
+  "finalHeightDimForm",
+  "finalWallThickness",
+  "finalAirflowReport",
+]);
 
 /** Which worksheet to render for each of PRINT_PDF_SECTIONS, when falling back to rendering the
  * data spreadsheet itself via Excel (see renderXlsxSheetToPdf) because no standalone PDF exists.
@@ -63,7 +143,12 @@ const PRINT_PDF_SECTIONS = new Set(["heightDimForm", "dovetailDimension", "wallT
 const PRINT_PDF_SHEET_PATTERNS: Record<string, RegExp> = {
   heightDimForm: HEIGHT_DIM_FORM_SHEET_PATTERN,
   dovetailDimension: DOVETAIL_SHEET_PATTERN,
+  zDropDimension: Z_DROP_SHEET_PATTERN,
   wallThickness: WALL_THICKNESS_SHEET_PATTERN,
+  airflowReport: AIRFLOW_SHEET_PATTERN,
+  finalHeightDimForm: HEIGHT_DIM_FORM_SHEET_PATTERN,
+  finalWallThickness: WALL_THICKNESS_SHEET_PATTERN,
+  finalAirflowReport: AIRFLOW_SHEET_PATTERN,
 };
 
 // Shared with the /api/manual-attachment route, which is the only writer of this convention: a
@@ -90,6 +175,39 @@ function findPrintPdf(section: SectionConfig, files: JobFile[]): JobFile | undef
   return matches[0]?.candidates[0];
 }
 
+/** Scrap Report / SN Recording Sheet don't work like PRINT_PDF_SECTIONS above -- their own
+ * sourceRules point at the Serial Number List workbook (the same one serialNumberList parses),
+ * so swapping its extension to .pdf would just find Serial Number List's own PDF, not a scrap- or
+ * other-number-specific one. These two need their own dedicated filename pattern for the real,
+ * standalone print-ready export instead (confirmed against Job 20591: "...Serial Number List
+ * SCRAP.pdf" and "...Serial OTHER Number List INCOMING.pdf" are both separate files from the
+ * main "...INCOMING.xlsx"/"...INCOMING.pdf" pair). */
+const OPTIONAL_SUBSHEET_PDF_PATTERNS: Record<string, RegExp> = {
+  scrapReport: /ds-?0554.*scrap|serial.*number.*scrap|scrap.*serial/i,
+  snRecordingSheet: /other.*number|serial.*other|sn.*recording/i,
+  // Final Report's own scrap export -- confirmed against Job 18664: "SCRAP SN List 5-30-26.pdf",
+  // a plainer name than the incoming-stage equivalent's, so the pattern is looser to match.
+  finalScrapReport: /scrap.*(sn|serial|number)/i,
+  finalSnRecordingSheet: /other.*number|serial.*other|sn.*recording/i,
+};
+
+/** Best-effort vision-based fallback for a section's real exhibit when filename matching didn't
+ * turn up a good candidate (see contentIdentify.ts's identifyByContent for what "good" means
+ * here and why this degrades to nothing without an API key). `exclude` skips files already known
+ * as filename-matched candidates, so a rescan doesn't re-spend a vision call on a file we've
+ * already decided belongs to this section. */
+async function findContentBasedMatches(sectionId: string, files: JobFile[], exclude: Set<string>) {
+  const contentCandidates = files
+    .filter((f) => CONTENT_SCAN_EXTENSIONS.has(f.ext))
+    .filter((f) => !exclude.has(f.relativePath))
+    .filter((f) => !/(^|\/)_/.test(f.folderPath) && !/pictures/i.test(f.folderPath))
+    // Reports/QA folders are where these exhibits actually live in practice (same reasoning as
+    // chemTest's own preferFolder) -- tried first so the concurrency cap in identifyByContent
+    // spends itself on the likeliest candidates on a job with a lot of loose PDFs scattered around.
+    .sort((a, b) => Number(!LIKELY_EXHIBIT_FOLDER.test(a.folderPath)) - Number(!LIKELY_EXHIBIT_FOLDER.test(b.folderPath)));
+  return identifyByContent(sectionId, contentCandidates);
+}
+
 /** Some jobs never had a standalone print-ready PDF made at all -- the completed form (with its
  * measurement diagrams, callouts, etc.) exists only as pictures embedded directly in the data
  * spreadsheet itself. ExcelJS can read that sheet's cell values but has no rendering capability,
@@ -114,7 +232,7 @@ function jobFileFromAbsolutePath(absolutePath: string, jobRoot: string): JobFile
   return { absolutePath, relativePath, baseName: path.basename(absolutePath), ext: path.extname(absolutePath).toLowerCase(), folderPath };
 }
 
-async function scanFileBackedSection(section: SectionConfig, files: JobFile[], jobRoot: string): Promise<SectionScanResult> {
+async function scanFileBackedSection(section: SectionConfig, files: JobFile[], jobRoot: string, metadata: JobMetadata): Promise<SectionScanResult> {
   const base = {
     id: section.id,
     title: section.title,
@@ -195,6 +313,29 @@ async function scanFileBackedSection(section: SectionConfig, files: JobFile[], j
         printPdfFile,
       };
     }
+
+    // Filename matching found literally nothing -- before giving up, see if any PDF/image
+    // elsewhere in the job folder is actually the exhibit under a generic name (a shop scanner's
+    // own naming, not APG's convention). Only worth trying for the sections that are attached
+    // verbatim rather than parsed: a data spreadsheet still has to match its own known column
+    // layout to be usable, so a content guess wouldn't help those the way it can for "is this
+    // PDF a crack map" -- something a vision call can answer even off a pure scanned image with
+    // no text layer at all. Every match here is still surfaced as needing confirmation, never
+    // silently trusted the way a filename match is (see the status below).
+    if (ATTACH_AS_IS_NO_PARSE.has(section.id)) {
+      const contentMatches = await findContentBasedMatches(section.id, files, new Set());
+      if (contentMatches.length > 0) {
+        return {
+          ...base,
+          status: "needs-attention",
+          statusReason: `No file matched by name, but ${contentMatches.length} candidate${
+            contentMatches.length > 1 ? "s were" : " was"
+          } identified by its content instead — confirm this is the right exhibit before generating the report.`,
+          matchedFiles: contentMatches.map((m) => m.file),
+        };
+      }
+    }
+
     return { ...base, status: "missing", statusReason: "No matching source file found in the job folder.", matchedFiles: [] };
   }
 
@@ -202,7 +343,11 @@ async function scanFileBackedSection(section: SectionConfig, files: JobFile[], j
     for (const match of ruleMatches) {
       for (const candidate of match.candidates) {
         try {
-          const parsed = await parseRouter(candidate.absolutePath);
+          // Some customers' jobs have no repair-router file at all -- a "Repair CDS" reference
+          // workbook stands in for Recommended Repairs on those (see repairCds.ts's own comment);
+          // tried second since the vast majority of jobs are router-based and CDS's own real
+          // sheets simply won't be there for them, so this always falls through cheaply.
+          const parsed = (await parseRouter(candidate.absolutePath)) ?? (await parseRepairCds(candidate.absolutePath, metadata));
           if (parsed && parsed.operations.length > 0) {
             const activeCount = parsed.operations.filter((o) => o.active).length;
             return {
@@ -226,8 +371,88 @@ async function scanFileBackedSection(section: SectionConfig, files: JobFile[], j
     };
   }
 
+  const optionalSubsheetParser = OPTIONAL_SUBSHEET_PARSERS[section.id];
+  if (optionalSubsheetParser) {
+    // A manually-attached file (see manualPdf/manualFiles above) is an explicit human override --
+    // embed it outright, same as every other manually-attached section, without waiting on the
+    // xlsx tab to also show real rows. The tech rep attaching one here almost always means the
+    // xlsx side wasn't giving the right answer (or didn't have this tab at all), so gating it
+    // behind that same parse would defeat the point of overriding it.
+    if (manualPdf) {
+      return {
+        ...base,
+        status: "ready",
+        statusReason: `Manually attached: "${manualPdf.relativePath}" will be embedded in the report as-is.`,
+        matchedFiles: [manualPdf],
+        printPdfFile: manualPdf,
+      };
+    }
+
+    // A real, standalone print-ready export of this exact tab -- separate file from the workbook
+    // itself (see OPTIONAL_SUBSHEET_PDF_PATTERNS' own comment). Found up front, same as
+    // PRINT_PDF_SECTIONS elsewhere, but only actually used below once there's real data to show:
+    // embedding it over a genuinely blank tab would print a page nobody asked for.
+    const pdfPattern = OPTIONAL_SUBSHEET_PDF_PATTERNS[section.id];
+    const subsheetPrintPdf = pdfPattern ? files.find((f) => f.ext === ".pdf" && pdfPattern.test(f.baseName)) : undefined;
+
+    for (const match of ruleMatches) {
+      for (const candidate of match.candidates) {
+        try {
+          const parsed = await optionalSubsheetParser(candidate.absolutePath);
+          if (!parsed) continue; // this candidate's workbook doesn't have the tab at all -- try the next one
+          // Unlike TABLE_PARSERS below, a zero-row result here is a real, honest answer (nothing
+          // scrapped yet, no prior history recorded) rather than a parsing failure -- see
+          // scrapReport.ts / snRecordingSheet.ts's own comments.
+          const hasData = parsed.rows.length > 0;
+          const embedPdf = hasData ? subsheetPrintPdf : undefined;
+          return {
+            ...base,
+            status: "ready",
+            statusReason: hasData
+              ? embedPdf
+                ? `Parsed ${parsed.rows.length} row(s) from "${candidate.relativePath}"; the completed form "${embedPdf.relativePath}" will be embedded in the report as-is.`
+                : `Parsed ${parsed.rows.length} row(s) from "${candidate.relativePath}".`
+              : `Found "${candidate.relativePath}", but this tab is currently blank for this job.`,
+            matchedFiles: embedPdf ? [embedPdf] : [candidate],
+            parsedTable: parsed,
+            printPdfFile: embedPdf,
+          };
+        } catch {
+          // try the next candidate
+        }
+      }
+    }
+    // The workbook itself was found (ruleMatches is non-empty, or scanFileBackedSection would
+    // have returned "missing" already above) but none of its candidates had this specific tab --
+    // an older workbook revision without a Scrap or SN Recording Sheet tab. That's genuinely
+    // "missing" (the capability isn't in this job's workbook), distinct from "blank" (the tab
+    // exists but has nothing recorded in it yet).
+    return {
+      ...base,
+      status: "missing",
+      statusReason: "This job's Serial Number List workbook doesn't have this tab.",
+      matchedFiles: [],
+    };
+  }
+
   if (ATTACH_AS_IS_NO_PARSE.has(section.id)) {
-    const candidates = ruleMatches[0].candidates;
+    let candidates = ruleMatches[0].candidates;
+    // A filename match existing doesn't guarantee it's the *right* file -- e.g. a Purchase
+    // Requisition can share enough wording with the real exhibit's naming convention to match by
+    // accident, while the actual vendor cert sits under a completely generic scan filename
+    // elsewhere. Run the same content-based check used for the zero-match case here too, so the
+    // real exhibit still surfaces as an option even when a wrong (but plausible-looking) filename
+    // match already exists -- merged in and deduped rather than replacing the filename match, so
+    // the tech rep sees both and picks.
+    const contentMatches = await findContentBasedMatches(
+      section.id,
+      files,
+      new Set(candidates.map((f) => f.relativePath))
+    );
+    if (contentMatches.length > 0) {
+      candidates = [...candidates, ...contentMatches.map((m) => m.file)];
+    }
+
     const candidate = candidates[0];
     const ambiguous = candidates.length > 1;
     return {
@@ -344,7 +569,7 @@ export async function scanJobFolder(jobRoot: string, template: ReportTemplate): 
       continue;
     }
     if (section.dependsOnSections) continue; // pass 2
-    resolved.set(section.id, await scanFileBackedSection(section, files, jobRoot));
+    resolved.set(section.id, await scanFileBackedSection(section, files, jobRoot, metadata));
   }
 
   // Pass 2: sections synthesized from other sections' results.

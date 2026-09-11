@@ -35,7 +35,14 @@ export function cellNumber(cell: ExcelJS.Cell | undefined): number | null {
   }
   const text = cellText(cell);
   if (text === "") return null;
-  const n = Number(text.replace(/[^0-9.+-]/g, ""));
+  const stripped = text.replace(/[^0-9.+-]/g, "");
+  // A label like "Minimum Limits:" strips down to "", and Number("") is 0 -- not NaN -- so
+  // without this check a purely non-numeric cell would silently read as a real zero instead of
+  // "not a number" (confirmed by a real bug: wallThickness's dynamic search for minimum-limit
+  // rows walked straight through a text-only header row because every one of its cells came back
+  // as a valid-looking 0 rather than null).
+  if (!/\d/.test(stripped)) return null;
+  const n = Number(stripped);
   return Number.isFinite(n) ? n : null;
 }
 

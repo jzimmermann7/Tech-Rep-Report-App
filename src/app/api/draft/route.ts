@@ -1,17 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
 import { scanJobFolder } from "@/lib/ingest/scanJobFolder";
-import { iaReportTemplate } from "@/lib/report-templates/ia-report";
+import { resolveReportTemplate } from "@/lib/report-templates";
 import { updateSectionState, loadJobState } from "@/lib/state/jobState";
 import { draftFpiVisual, draftRecommendedRepairs, draftDimensionalSummary, draftIaSummary } from "@/lib/draft/narrative";
 import { selectBestPhotos } from "@/lib/draft/photoSelect";
 
 export async function POST(request: NextRequest) {
   const body = await request.json();
-  const { jobRoot, sectionId, instruction } = body as { jobRoot: string; sectionId: string; instruction?: string };
+  const { jobRoot, sectionId, instruction, reportType } = body as { jobRoot: string; sectionId: string; instruction?: string; reportType?: string };
   if (!jobRoot || !sectionId) return NextResponse.json({ error: "jobRoot and sectionId are required" }, { status: 400 });
 
   try {
-    const scanResult = await scanJobFolder(jobRoot, iaReportTemplate);
+    const scanResult = await scanJobFolder(jobRoot, resolveReportTemplate(reportType));
     const bySectionId = new Map(scanResult.sections.map((s) => [s.id, s]));
     const section = bySectionId.get(sectionId);
     if (!section) return NextResponse.json({ error: `Unknown section ${sectionId}` }, { status: 404 });
@@ -39,11 +39,19 @@ export async function POST(request: NextRequest) {
         break;
       }
       case "dimensionalSummary": {
+        // See autoDraft.ts's dimInput -- a section can be "ready" off its print-ready PDF alone
+        // with no readable spreadsheet, and the draft needs to know that to avoid calling it
+        // missing.
+        const dimInput = (id: string) => {
+          const s = bySectionId.get(id);
+          return s ? { table: s.parsedTable, hasPdf: Boolean(s.printPdfFile) } : undefined;
+        };
         content = await draftDimensionalSummary(
           {
-            heightDimForm: bySectionId.get("heightDimForm")?.parsedTable,
-            dovetailDimension: bySectionId.get("dovetailDimension")?.parsedTable,
-            wallThickness: bySectionId.get("wallThickness")?.parsedTable,
+            heightDimForm: dimInput("heightDimForm"),
+            dovetailDimension: dimInput("dovetailDimension"),
+            zDropDimension: dimInput("zDropDimension"),
+            wallThickness: dimInput("wallThickness"),
           },
           ctx
         );
@@ -59,8 +67,9 @@ export async function POST(request: NextRequest) {
         content = await draftIaSummary(depDrafts, ctx);
         break;
       }
-      case "photoSet": {
-        const result = await selectBestPhotos(section.matchedFiles);
+      case "photoSet":
+      case "finalPhotoSet": {
+        const result = await selectBestPhotos(section.matchedFiles, sectionId === "finalPhotoSet" ? "final" : "incoming");
         content = result.raw;
         selectedPhotoPaths = result.includedPaths;
         break;

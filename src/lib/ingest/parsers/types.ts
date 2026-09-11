@@ -23,3 +23,25 @@ export interface ParsedTable {
    * this app's own automated caveats, not part of the original form. */
   hasNotesBox?: boolean;
 }
+
+/** Applies manually-entered cell corrections (see SectionState.tableEdits) on top of a
+ * freshly-parsed table. Edits are keyed "<row index>:<column name>" against the table's own row
+ * order — stable because a given section's table always comes from the same parser/source shape,
+ * so the same row keeps the same index scan to scan. Returns a new table; never mutates the one
+ * passed in, since callers (the review screen, report generation) also read the un-edited version. */
+export function applyTableEdits(table: ParsedTable, edits: Record<string, string> | undefined): ParsedTable {
+  if (!edits || Object.keys(edits).length === 0) return table;
+  const rows = table.rows.map((row, i) => {
+    let changed = false;
+    const next = { ...row };
+    for (const c of table.columns) {
+      const key = `${i}:${c}`;
+      if (Object.prototype.hasOwnProperty.call(edits, key)) {
+        next[c] = edits[key];
+        changed = true;
+      }
+    }
+    return changed ? next : row;
+  });
+  return { ...table, rows };
+}
