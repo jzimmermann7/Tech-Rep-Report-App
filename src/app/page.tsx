@@ -16,12 +16,12 @@ const REPORT_TYPE_OPTIONS: Array<{ id: ReportTypeId; label: string; description:
   {
     id: "ia",
     label: "I&A Report",
-    description: "Inspect & Advise — the incoming-inspection report a job starts with.",
+    description: "Inspect & Advise",
   },
   {
     id: "final",
     label: "Final Report",
-    description: "The completion deliverable — largely the same sections as the I&A Report, plus a few more.",
+    description: "The completion deliverable",
   },
 ];
 
