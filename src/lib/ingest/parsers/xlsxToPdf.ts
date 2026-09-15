@@ -2,6 +2,7 @@ import { promises as fs } from "fs";
 import path from "path";
 import { execFile } from "child_process";
 import { promisify } from "util";
+import { toLongPath } from "../../util/longPath";
 
 const execFileAsync = promisify(execFile);
 
@@ -12,7 +13,7 @@ const execFileAsync = promisify(execFile);
  * finds the "xl/media/..." entries Excel uses for embedded pictures. */
 export async function xlsxHasEmbeddedImages(xlsxPath: string): Promise<boolean> {
   try {
-    const buffer = await fs.readFile(xlsxPath);
+    const buffer = await fs.readFile(toLongPath(xlsxPath));
     return buffer.toString("latin1").includes("xl/media/");
   } catch {
     return false;
@@ -72,8 +73,8 @@ export async function renderXlsxSheetToPdf(xlsxPath: string, sheetNamePattern: R
   const outputPath = path.join(cacheDir, cacheName);
 
   try {
-    const sourceStat = await fs.stat(xlsxPath);
-    const cacheStat = await fs.stat(outputPath).catch(() => null);
+    const sourceStat = await fs.stat(toLongPath(xlsxPath));
+    const cacheStat = await fs.stat(toLongPath(outputPath)).catch(() => null);
     if (cacheStat && cacheStat.mtimeMs >= sourceStat.mtimeMs) return outputPath;
   } catch {
     return null; // source file vanished mid-scan, etc.

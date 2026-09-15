@@ -1,6 +1,7 @@
 import { promises as fs } from "fs";
 import { getAnthropicClient, VISION_MODEL } from "../anthropic/client";
 import type { JobFile } from "./fileWalk";
+import { toLongPath } from "../util/longPath";
 
 export interface ContentMatch {
   file: JobFile;
@@ -60,13 +61,13 @@ export async function identifyByContent(sectionId: string, candidates: JobFile[]
   const results = await Promise.all(
     candidates.slice(0, MAX_CANDIDATES).map(async (file): Promise<ContentMatch | null> => {
       try {
-        const stat = await fs.stat(file.absolutePath);
+        const stat = await fs.stat(toLongPath(file.absolutePath));
         if (stat.size > MAX_FILE_BYTES) return null;
 
         const imageMediaType = mediaTypeFor(file.ext);
         if (file.ext !== ".pdf" && !imageMediaType) return null; // not a type we can send at all
 
-        const buffer = await fs.readFile(file.absolutePath);
+        const buffer = await fs.readFile(toLongPath(file.absolutePath));
         const data = buffer.toString("base64");
         const block =
           file.ext === ".pdf"

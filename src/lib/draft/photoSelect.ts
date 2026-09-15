@@ -2,6 +2,7 @@ import { promises as fs } from "fs";
 import sharp from "sharp";
 import { getAnthropicClient, VISION_MODEL } from "../anthropic/client";
 import type { JobFile } from "../ingest/fileWalk";
+import { toLongPath } from "../util/longPath";
 
 export interface PhotoExclusion {
   relativePath: string;
@@ -48,7 +49,7 @@ async function classifyBatch(batch: JobFile[]): Promise<{ exclusions: PhotoExclu
   try {
     const imageBlocks = await Promise.all(
       batch.map(async (file) => {
-        const buffer = await fs.readFile(file.absolutePath);
+        const buffer = await fs.readFile(toLongPath(file.absolutePath));
         return {
           type: "image" as const,
           source: {
@@ -141,7 +142,7 @@ const UV_BRIGHTNESS_THRESHOLD = 75;
 
 async function isUvLit(absolutePath: string): Promise<boolean> {
   try {
-    const { data } = await sharp(absolutePath).resize(32, 32, { fit: "fill" }).grayscale().raw().toBuffer({ resolveWithObject: true });
+    const { data } = await sharp(toLongPath(absolutePath)).resize(32, 32, { fit: "fill" }).grayscale().raw().toBuffer({ resolveWithObject: true });
     const mean = data.reduce((sum, v) => sum + v, 0) / data.length;
     return mean < UV_BRIGHTNESS_THRESHOLD;
   } catch {

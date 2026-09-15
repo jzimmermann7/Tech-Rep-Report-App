@@ -1,9 +1,14 @@
 import ExcelJS from "exceljs";
+import { toLongPath } from "../util/longPath";
 
-/** Load a workbook from disk. Works for .xlsx and .xlsm (macros are ignored, we only read cells). */
+/** Load a workbook from disk. Works for .xlsx and .xlsm (macros are ignored, we only read cells).
+ * Reads via the extended-length path form -- see toLongPath's own comment -- since a real job
+ * folder's own path plus a source workbook's verbose real filename routinely breaches Windows'
+ * classic 260-character limit, and this is the single most-shared read path in the app (every
+ * table/router parser goes through it). */
 export async function loadWorkbook(absolutePath: string): Promise<ExcelJS.Workbook> {
   const workbook = new ExcelJS.Workbook();
-  await workbook.xlsx.readFile(absolutePath);
+  await workbook.xlsx.readFile(toLongPath(absolutePath));
   return workbook;
 }
 
