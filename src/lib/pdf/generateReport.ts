@@ -6,6 +6,7 @@ import { resolveReportTemplate } from "../report-templates";
 import { loadJobState } from "../state/jobState";
 import { renderReportSegments } from "./renderReportHtml";
 import { htmlToPdf } from "./htmlToPdf";
+import { toLongPath } from "../util/longPath";
 
 const ATTACH_AS_IS_ORDER = ["metallurgicalReport", "chemTest", "crackMap"];
 
@@ -16,18 +17,20 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/** Reads a file with a couple of short retries before giving up. Every source file this generates
- * from lives on the tech reps' mapped T:\ network share, which periodically drops or stales out an
- * idle connection -- Node then surfaces that as a bare `UNKNOWN: unknown error, read` with no
- * indication of which file it was even trying to read (seen firsthand generating Job 18664's Final
- * Report). A stale connection like that typically clears itself within a second, so a short retry
- * turns most of these into a non-event instead of failing the whole report; if it's still failing
- * after retrying, the rethrown error at least names the file so it's actually actionable. */
+/** Reads a file with a couple of short retries before giving up. Most of the time a failure here
+ * is one of two things: the tech reps' mapped T:\ network share dropping or staling out an idle
+ * connection, or (confirmed firsthand against a real 271-character path under a OneDrive-synced
+ * job folder) the combined job-folder/exhibit path breaching Windows' classic 260-character
+ * MAX_PATH -- toLongPath handles the latter outright, and the retry loop covers the former, which
+ * a longer path alone wouldn't fix. Either way Node previously surfaced this as a bare `UNKNOWN:
+ * unknown error, read` with no indication of which file it was even trying to read; the rethrown
+ * error after retries names the actual file so it's actually actionable. */
 async function readFileWithRetry(sourcePath: string): Promise<Buffer> {
+  const longPath = toLongPath(sourcePath);
   let lastErr: unknown;
   for (let attempt = 1; attempt <= READ_RETRY_ATTEMPTS; attempt++) {
     try {
-      return await fs.readFile(sourcePath);
+      return await fs.readFile(longPath);
     } catch (err) {
       lastErr = err;
       if (attempt < READ_RETRY_ATTEMPTS) await delay(READ_RETRY_DELAY_MS * attempt);
