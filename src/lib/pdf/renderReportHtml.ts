@@ -236,6 +236,10 @@ const REPORT_STYLES = (apgBlue: string, apgBarGray: string) => `
      (confirmed directly against real screenshots of Job 20443's completed report -- the app's
      text was noticeably smaller/denser than the real thing, not just a stylistic choice). */
   .narrative-section p, .narrative-section li { font-size: 17px; line-height: 1.6; }
+  /* I&A Summary and FPI & Visual Inspection Summary specifically, bumped further per tech rep
+     feedback -- these two get read closest, so a bit larger again than the other narrative
+     sections' already-enlarged 17px. */
+  .narrative-section-large p, .narrative-section-large li { font-size: 19px; }
   section { page-break-inside: avoid; }
   section.report-page { page-break-before: always; margin-bottom: 16px; }
   section.table-section { page-break-inside: auto; }
@@ -363,7 +367,12 @@ export async function renderReportSegments(scan: JobScanResult, state: JobState)
     // long, rather than forcing it to a fixed page count.
     const standardDiagramHtml = id === "iaSummary" ? await renderStandardDiagram(scan, state) : "";
     const body = id === "recommendedRepairs" ? `<div class="repairs-columns">${narrativeHtml}</div>` : `${narrativeHtml}${standardDiagramHtml}`;
-    const sectionClass = id === "recommendedRepairs" ? "report-page narrative-section repairs-section" : "report-page narrative-section";
+    const sectionClass =
+      id === "recommendedRepairs"
+        ? "report-page narrative-section repairs-section"
+        : id === "iaSummary" || id === "fpiVisual"
+          ? "report-page narrative-section narrative-section-large"
+          : "report-page narrative-section";
     bodyParts.push(`<section class="${sectionClass}">${pageHeader(section.title, logo)}${body}</section>`);
   }
 
