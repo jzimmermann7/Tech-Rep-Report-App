@@ -228,6 +228,11 @@ const REPORT_STYLES = (apgBlue: string, apgBarGray: string) => `
      original reports -- see .narrative-section below for why the whole section scaled up. */
   p.subhead { text-decoration: underline; font-weight: 400; margin: 20px 0 0; }
   p.subhead:first-child { margin-top: 0; }
+  /* FPI & Visual Inspection Summary's own category subheads (Tips:, Airfoil:, Platform:, ...) --
+     bolded per tech rep feedback, on top of the underline every narrative section's subheads
+     already get. Scoped to this one section rather than the shared p.subhead rule above, since
+     that's what was actually asked for. */
+  .fpi-visual-section p.subhead { font-weight: 700; }
   .narrative-list { margin: 0 0 6px; padding-left: 22px; }
   .narrative-list li { margin-bottom: 1px; line-height: 1.5; }
   /* I&A Summary, FPI & Visual, Dimensional Summary, Recommended Repairs — larger than the base
@@ -367,12 +372,15 @@ export async function renderReportSegments(scan: JobScanResult, state: JobState)
     // long, rather than forcing it to a fixed page count.
     const standardDiagramHtml = id === "iaSummary" ? await renderStandardDiagram(scan, state) : "";
     const body = id === "recommendedRepairs" ? `<div class="repairs-columns">${narrativeHtml}</div>` : `${narrativeHtml}${standardDiagramHtml}`;
-    const sectionClass =
-      id === "recommendedRepairs"
-        ? "report-page narrative-section repairs-section"
-        : id === "iaSummary" || id === "fpiVisual"
-          ? "report-page narrative-section narrative-section-large"
-          : "report-page narrative-section";
+    const sectionClass = [
+      "report-page",
+      "narrative-section",
+      id === "recommendedRepairs" && "repairs-section",
+      (id === "iaSummary" || id === "fpiVisual") && "narrative-section-large",
+      id === "fpiVisual" && "fpi-visual-section",
+    ]
+      .filter(Boolean)
+      .join(" ");
     bodyParts.push(`<section class="${sectionClass}">${pageHeader(section.title, logo)}${body}</section>`);
   }
 
