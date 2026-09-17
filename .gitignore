@@ -40,3 +40,8 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# generated report output / one-off investigation scripts left at the repo root -- never meant to
+# be committed, only ever a local test artifact
+/*.pdf
+/scratch_*
