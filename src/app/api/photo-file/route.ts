@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { promises as fs } from "fs";
 import path from "path";
+import { toLongPath } from "@/lib/util/longPath";
 
 const MIME: Record<string, string> = {
   ".jpg": "image/jpeg",
@@ -21,7 +22,7 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const buffer = await fs.readFile(resolved);
+    const buffer = await fs.readFile(toLongPath(resolved));
     const ext = path.extname(resolved).toLowerCase();
     return new NextResponse(new Uint8Array(buffer), {
       headers: { "Content-Type": MIME[ext] ?? "application/octet-stream", "Cache-Control": "private, max-age=3600" },

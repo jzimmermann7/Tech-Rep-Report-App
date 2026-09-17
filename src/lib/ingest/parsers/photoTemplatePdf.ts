@@ -2,6 +2,7 @@ import { promises as fs } from "fs";
 import path from "path";
 import sharp from "sharp";
 import { PDFDocument, PDFDict, PDFName, PDFRawStream, PDFRef } from "pdf-lib";
+import { toLongPath } from "../../util/longPath";
 
 /** Below this in either dimension, an embedded image is template artwork (a logo, an icon, a
  * form's letterhead graphic) rather than a pasted camera photo — real inspection photos are
@@ -32,14 +33,14 @@ function isDctDecode(dict: PDFDict): boolean {
  */
 export async function extractEmbeddedPhotos(pdfPath: string, outDir: string): Promise<string[]> {
   try {
-    const existing = await fs.readdir(outDir);
+    const existing = await fs.readdir(toLongPath(outDir));
     const jpegs = existing.filter((f) => /\.jpe?g$/i.test(f));
     if (jpegs.length > 0) return jpegs.sort().map((f) => path.join(outDir, f));
   } catch {
     // outDir doesn't exist yet — fall through and extract.
   }
 
-  const bytes = await fs.readFile(pdfPath);
+  const bytes = await fs.readFile(toLongPath(pdfPath));
   const doc = await PDFDocument.load(bytes, { ignoreEncryption: true });
 
   const written: string[] = [];
@@ -63,9 +64,9 @@ export async function extractEmbeddedPhotos(pdfPath: string, outDir: string): Pr
 
       n++;
       const fileName = `p${pageIndex + 1}-${String(n).padStart(2, "0")}.jpg`;
-      if (written.length === 0) await fs.mkdir(outDir, { recursive: true });
+      if (written.length === 0) await fs.mkdir(toLongPath(outDir), { recursive: true });
       const outPath = path.join(outDir, fileName);
-      await fs.writeFile(outPath, contents);
+      await fs.writeFile(toLongPath(outPath), contents);
       written.push(outPath);
     }
   }
