@@ -261,7 +261,7 @@ const REPORT_STYLES = (apgBlue: string, apgBarGray: string) => `
   /* Cover page -- field rows sized to match APG's own original reports (see the narrative-section
      comment above for how these sizes were confirmed). */
   .cover { text-align: center; padding-top: 60px; }
-  .cover-logo { width: 260px; margin-bottom: 24px; }
+  .cover-logo { width: 320px; margin-bottom: 24px; }
   .cover h1 { font-size: 26px; margin: 0 0 40px; }
   .cover-fields { display: inline-block; text-align: left; }
   .cover-row { display: flex; gap: 24px; padding: 10px 0; font-size: 17px; }
