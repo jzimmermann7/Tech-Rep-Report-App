@@ -223,15 +223,28 @@ const REPORT_STYLES = (apgBlue: string, apgBarGray: string) => `
   body { font-family: Arial, Helvetica, sans-serif; font-size: 11px; color: #1a1a1a; }
   p { line-height: 1.5; margin: 0 0 10px; }
   /* Underlined subheading (e.g. "Tips:", "Squealer Tip Thickness (E):") — APG's usual way of
-     breaking a summary into named categories instead of one flowing paragraph. */
-  p.subhead { text-decoration: underline; font-weight: 400; margin: 14px 0 0; }
+     breaking a summary into named categories instead of one flowing paragraph. Extra top margin
+     (vs. the 14px this used to be) matches the generous gap between categories in APG's own
+     original reports -- see .narrative-section below for why the whole section scaled up. */
+  p.subhead { text-decoration: underline; font-weight: 400; margin: 20px 0 0; }
   p.subhead:first-child { margin-top: 0; }
+  /* FPI & Visual Inspection Summary's own category subheads (Tips:, Airfoil:, Platform:, ...) --
+     bolded per tech rep feedback, on top of the underline every narrative section's subheads
+     already get. Scoped to this one section rather than the shared p.subhead rule above, since
+     that's what was actually asked for. */
+  .fpi-visual-section p.subhead { font-weight: 700; }
   .narrative-list { margin: 0 0 6px; padding-left: 22px; }
   .narrative-list li { margin-bottom: 1px; line-height: 1.5; }
   /* I&A Summary, FPI & Visual, Dimensional Summary, Recommended Repairs — larger than the base
      body size (which stays small so data tables keep fitting) since these are the sections
-     someone actually sits down and reads. */
-  .narrative-section p, .narrative-section li { font-size: 14px; }
+     someone actually sits down and reads. Sized to match APG's own original reports' text size
+     (confirmed directly against real screenshots of Job 20443's completed report -- the app's
+     text was noticeably smaller/denser than the real thing, not just a stylistic choice). */
+  .narrative-section p, .narrative-section li { font-size: 17px; line-height: 1.6; }
+  /* I&A Summary and FPI & Visual Inspection Summary specifically, bumped further per tech rep
+     feedback -- these two get read closest, so a bit larger again than the other narrative
+     sections' already-enlarged 17px. */
+  .narrative-section-large p, .narrative-section-large li { font-size: 19px; }
   section { page-break-inside: avoid; }
   section.report-page { page-break-before: always; margin-bottom: 16px; }
   section.table-section { page-break-inside: auto; }
@@ -251,16 +264,17 @@ const REPORT_STYLES = (apgBlue: string, apgBarGray: string) => `
      positioned so the title centers over the full page width, not the space left after the logo. */
   .letterhead { position: relative; min-height: 40px; }
   .letterhead .logo { position: absolute; left: 0; top: 0; height: 40px; }
-  .letterhead .page-title { text-align: center; font-size: 20px; font-weight: 700; color: #1a1a1a; margin: 0; padding-top: 6px; }
+  .letterhead .page-title { text-align: center; font-size: 24px; font-weight: 700; color: #1a1a1a; margin: 0; padding-top: 6px; }
   .letterhead-bar { height: 4px; margin: 6px 0 20px; background: linear-gradient(to right, ${apgBlue} 0 12%, ${apgBarGray} 12% 100%); }
 
-  /* Cover page */
+  /* Cover page -- field rows sized to match APG's own original reports (see the narrative-section
+     comment above for how these sizes were confirmed). */
   .cover { text-align: center; padding-top: 60px; }
-  .cover-logo { width: 260px; margin-bottom: 24px; }
-  .cover h1 { font-size: 22px; margin: 0 0 40px; }
+  .cover-logo { width: 320px; margin-bottom: 24px; }
+  .cover h1 { font-size: 26px; margin: 0 0 40px; }
   .cover-fields { display: inline-block; text-align: left; }
-  .cover-row { display: flex; gap: 24px; padding: 7px 0; font-size: 14px; }
-  .cover-label { width: 150px; flex-shrink: 0; color: #6a6a6a; font-weight: 700; }
+  .cover-row { display: flex; gap: 24px; padding: 10px 0; font-size: 17px; }
+  .cover-label { width: 170px; flex-shrink: 0; color: #6a6a6a; font-weight: 700; }
   .cover-value { font-weight: 700; color: #1a1a1a; }
 
   table { border-collapse: collapse; width: 100%; margin-top: 8px; }
@@ -358,7 +372,15 @@ export async function renderReportSegments(scan: JobScanResult, state: JobState)
     // long, rather than forcing it to a fixed page count.
     const standardDiagramHtml = id === "iaSummary" ? await renderStandardDiagram(scan, state) : "";
     const body = id === "recommendedRepairs" ? `<div class="repairs-columns">${narrativeHtml}</div>` : `${narrativeHtml}${standardDiagramHtml}`;
-    const sectionClass = id === "recommendedRepairs" ? "report-page narrative-section repairs-section" : "report-page narrative-section";
+    const sectionClass = [
+      "report-page",
+      "narrative-section",
+      id === "recommendedRepairs" && "repairs-section",
+      (id === "iaSummary" || id === "fpiVisual") && "narrative-section-large",
+      id === "fpiVisual" && "fpi-visual-section",
+    ]
+      .filter(Boolean)
+      .join(" ");
     bodyParts.push(`<section class="${sectionClass}">${pageHeader(section.title, logo)}${body}</section>`);
   }
 
