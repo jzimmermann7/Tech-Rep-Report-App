@@ -18,20 +18,27 @@ export async function POST(request: NextRequest) {
   const form = await request.formData();
   const jobRoot = form.get("jobRoot");
   const sectionId = form.get("sectionId");
-  const file = form.get("file");
+  // One or more files -- a tech rep attaching, say, a multi-page cert that was scanned as
+  // separate files, or just several candidates to compare at once, shouldn't need a separate
+  // round trip per file.
+  const files = form.getAll("file").filter((f): f is File => f instanceof File);
 
   if (typeof jobRoot !== "string" || !jobRoot) return NextResponse.json({ error: "jobRoot is required" }, { status: 400 });
   if (typeof sectionId !== "string" || !sectionId || !SAFE_SEGMENT.test(sectionId) || sectionId.startsWith(".")) {
     return NextResponse.json({ error: "Invalid sectionId" }, { status: 400 });
   }
-  if (!(file instanceof File)) return NextResponse.json({ error: "file is required" }, { status: 400 });
+  if (files.length === 0) return NextResponse.json({ error: "At least one file is required" }, { status: 400 });
 
   // Original filename, but stripped of anything but a plain base name -- e.g. a browser handing
   // us a full path from a drag-drop, or someone crafting a traversal attempt, both collapse to
   // just the last segment before this check runs.
-  const safeName = path.basename(file.name).trim();
-  if (!safeName || !SAFE_SEGMENT.test(safeName) || safeName.startsWith(".")) {
-    return NextResponse.json({ error: "Invalid file name" }, { status: 400 });
+  const safeNames: string[] = [];
+  for (const file of files) {
+    const safeName = path.basename(file.name).trim();
+    if (!safeName || !SAFE_SEGMENT.test(safeName) || safeName.startsWith(".")) {
+      return NextResponse.json({ error: `Invalid file name: "${file.name}"` }, { status: 400 });
+    }
+    safeNames.push(safeName);
   }
 
   const destDir = path.join(jobRoot, MANUAL_ATTACHMENTS_DIR, sectionId);
@@ -42,11 +49,26 @@ export async function POST(request: NextRequest) {
   }
 
   try {
+    // A fresh upload replaces whatever was manually attached here before, rather than piling up
+    // alongside it -- a tech rep swapping in the right file after realizing an earlier manual
+    // attachment was wrong expects the old one gone, not still sitting in the candidate list.
+    // Clearing out the directory's own *files* first, rather than fs.rm-ing the directory itself
+    // recursively, deliberately avoids an rmdir call entirely -- confirmed against this app's own
+    // real T:\ network share that removing (not just reading/writing into) a directory there can
+    // fail with a flat EPERM even when nothing else holds it open, the same class of flakiness the
+    // PDF generator's own readFileWithRetry already works around for reads. Deleting each file
+    // individually and leaving the (now-empty) directory in place sidesteps that path completely.
     await fs.mkdir(destDir, { recursive: true });
-    const bytes = Buffer.from(await file.arrayBuffer());
-    await fs.writeFile(path.join(destDir, safeName), bytes);
-    return NextResponse.json({ relativePath: `${MANUAL_ATTACHMENTS_DIR}/${sectionId}/${safeName}` });
+    const existing = await fs.readdir(destDir).catch(() => [] as string[]);
+    await Promise.all(existing.map((name) => fs.unlink(path.join(destDir, name)).catch(() => {})));
+    const relativePaths: string[] = [];
+    for (let i = 0; i < files.length; i++) {
+      const bytes = Buffer.from(await files[i].arrayBuffer());
+      await fs.writeFile(path.join(destDir, safeNames[i]), bytes);
+      relativePaths.push(`${MANUAL_ATTACHMENTS_DIR}/${sectionId}/${safeNames[i]}`);
+    }
+    return NextResponse.json({ relativePaths });
   } catch (err) {
-    return NextResponse.json({ error: err instanceof Error ? err.message : "Failed to save file" }, { status: 500 });
+    return NextResponse.json({ error: err instanceof Error ? err.message : "Failed to save file(s)" }, { status: 500 });
   }
 }

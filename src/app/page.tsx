@@ -329,18 +329,33 @@ function ManualAttachmentUpload({
   const [busy, setBusy] = useState(false);
   const inputId = `manual-attach-${sectionId}`;
 
-  const handleFile = async (file: File) => {
+  // Accepts one or more files at once (a multi-page cert scanned as separate images, or just
+  // several to compare) and replaces whatever was manually attached here before -- see the
+  // manual-attachment route's own comment for why a fresh upload clears the old one out rather
+  // than piling up alongside it.
+  const handleFiles = async (files: FileList) => {
     setBusy(true);
     try {
       const form = new FormData();
       form.append("jobRoot", jobRoot);
       form.append("sectionId", sectionId);
-      form.append("file", file);
+      for (const file of files) form.append("file", file);
       const res = await fetch("/api/manual-attachment", { method: "POST", body: form });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Upload failed");
-      // The file now sits inside the job folder itself (see manualAttachmentsFor's convention),
-      // so a full rescan is what actually picks it up -- there's no lighter-weight update that
+      // Make the fresh upload the active selection outright -- switching out a wrong auto-match
+      // (or an earlier manual attachment) should take effect immediately, not leave the tech rep
+      // to also go find and click it in a candidate picker afterward.
+      const relativePaths: string[] = data.relativePaths ?? [];
+      if (relativePaths[0]) {
+        await fetch("/api/section-state", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ jobRoot, sectionId, patch: { selectedAttachmentPath: relativePaths[0] } }),
+        });
+      }
+      // The file(s) now sit inside the job folder itself (see manualAttachmentsFor's convention),
+      // so a full rescan is what actually picks them up -- there's no lighter-weight update that
       // would parse it, resolve a print-PDF pairing, etc.
       onUploaded();
     } catch (e) {
@@ -355,18 +370,22 @@ function ManualAttachmentUpload({
       <input
         id={inputId}
         type="file"
+        multiple
         className="manual-attachment-input"
         disabled={busy}
         onChange={(e) => {
-          const file = e.target.files?.[0];
+          const files = e.target.files;
           e.target.value = "";
-          if (file) handleFile(file);
+          if (files && files.length > 0) handleFiles(files);
         }}
       />
       <label htmlFor={inputId} className={`manual-attachment-btn ${busy ? "busy" : ""}`}>
         📎 {busy ? "Uploading…" : "Insert file manually"}
       </label>
-      <p className="manual-attachment-hint">{hint ?? "Didn't find it automatically? If you have this file somewhere else on your computer, attach it here."}</p>
+      <p className="manual-attachment-hint">
+        {hint ?? "Didn't find it automatically? If you have this file somewhere else on your computer, attach it here."} Selecting more than one
+        file, or uploading again later, replaces whatever was manually attached here before.
+      </p>
     </div>
   );
 }
