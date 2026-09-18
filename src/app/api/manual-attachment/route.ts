@@ -57,8 +57,19 @@ export async function POST(request: NextRequest) {
     await fs.mkdir(destDir, { recursive: true });
     const relativePaths: string[] = [];
     for (let i = 0; i < files.length; i++) {
+      const targetPath = path.join(destDir, safeNames[i]);
       const bytes = Buffer.from(await files[i].arrayBuffer());
-      await fs.writeFile(path.join(destDir, safeNames[i]), bytes);
+      await fs.writeFile(targetPath, bytes);
+      // Verify the write actually landed before reporting success -- confirmed real-world case:
+      // this same network-share class of flakiness (see readFileWithRetry/the POST handler's own
+      // EPERM history) can apparently let a write call resolve without an error yet leave no file
+      // behind, which previously meant the tech rep saw "success" and a chip that never showed up,
+      // with nothing in the response to explain why. Checking the size back out catches a partial
+      // write too, not just a missing file.
+      const stat = await fs.stat(targetPath).catch(() => null);
+      if (!stat || stat.size !== bytes.length) {
+        throw new Error(`"${safeNames[i]}" didn't save correctly (the write reported success, but the file isn't on disk as expected). Try again, or check your connection to this job's folder.`);
+      }
       relativePaths.push(`${MANUAL_ATTACHMENTS_DIR}/${sectionId}/${safeNames[i]}`);
     }
     return NextResponse.json({ relativePaths });

@@ -895,6 +895,16 @@ button.generate-report:active:not(:disabled) {
   border: 2px dashed #b9cce8;
   border-radius: 8px;
   background: #f7fafd;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+
+/* A file dragged over the box from the desktop/Explorer -- same navy the rest of the app uses to
+   mean "this is active/selected", so it reads as a real drop target the instant something's
+   dragged over it, not just the resting dashed-border box. */
+.manual-attachment.dragging {
+  border-color: #0b3d91;
+  border-style: solid;
+  background: #eaf2fc;
 }
 
 .manual-attachment-input {

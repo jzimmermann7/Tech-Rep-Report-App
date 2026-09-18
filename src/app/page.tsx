@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { JobScanResult, SectionScanResult } from "@/lib/ingest/scanJobFolder";
 import type { JobFile } from "@/lib/ingest/fileWalk";
 import { COVER_FIELD_ORDER } from "@/lib/ingest/jobMetadata";
@@ -333,6 +333,7 @@ function ManualAttachmentUpload({
 }) {
   const [busy, setBusy] = useState(false);
   const [removing, setRemoving] = useState<string | undefined>(undefined);
+  const [dragging, setDragging] = useState(false);
   const inputId = `manual-attach-${sectionId}`;
 
   // Accepts one or more files at once (a multi-page cert scanned as separate images, or just
@@ -360,6 +361,33 @@ function ManualAttachmentUpload({
     }
   };
 
+  // Counts nested drag-enter/leave pairs rather than toggling on every one -- dragging over a
+  // child element (the button, a chip) fires its own enter/leave against the same drop zone, and
+  // without counting, that flickers the "dragging" highlight off the instant the cursor crosses
+  // into any of them instead of staying on for the whole time something's dragged over the box.
+  const dragDepth = useRef(0);
+  const onDragEnter = (e: React.DragEvent) => {
+    e.preventDefault();
+    dragDepth.current += 1;
+    if (e.dataTransfer.types.includes("Files")) setDragging(true);
+  };
+  const onDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    dragDepth.current = Math.max(0, dragDepth.current - 1);
+    if (dragDepth.current === 0) setDragging(false);
+  };
+  const onDragOver = (e: React.DragEvent) => {
+    // Required for onDrop to ever fire at all -- a plain <div> refuses drops by default.
+    e.preventDefault();
+  };
+  const onDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    dragDepth.current = 0;
+    setDragging(false);
+    const files = e.dataTransfer.files;
+    if (files && files.length > 0) handleFiles(files);
+  };
+
   const removeFile = async (baseName: string) => {
     setRemoving(baseName);
     try {
@@ -379,7 +407,13 @@ function ManualAttachmentUpload({
   };
 
   return (
-    <div className="manual-attachment">
+    <div
+      className={`manual-attachment ${dragging ? "dragging" : ""}`}
+      onDragEnter={onDragEnter}
+      onDragOver={onDragOver}
+      onDragLeave={onDragLeave}
+      onDrop={onDrop}
+    >
       <div className="manual-attachment-row">
         <input
           id={inputId}
@@ -415,7 +449,8 @@ function ManualAttachmentUpload({
         ))}
       </div>
       <p className="manual-attachment-hint">
-        {hint ?? "Didn't find it automatically? If you have this file somewhere else on your computer, add it here."}
+        {hint ?? "Didn't find it automatically? If you have this file somewhere else on your computer, add it here."} Or drag and drop it anywhere
+        in this box.
       </p>
     </div>
   );
