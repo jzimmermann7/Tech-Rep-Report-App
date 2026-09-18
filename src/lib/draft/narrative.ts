@@ -2,6 +2,7 @@ import { getAnthropicClient, NARRATIVE_MODEL } from "../anthropic/client";
 import type { JobMetadata } from "../ingest/jobMetadata";
 import type { ParsedTable } from "../ingest/parsers/types";
 import type { ParsedRouter } from "../ingest/parsers/router";
+import { fpiZonesFor } from "./fpiZones";
 
 const SYSTEM_PROMPT = `You are drafting a section of an internal turbine-component inspection report ("I&A Report") for Allied Power Group, a turbine parts repair company. The audience is the customer receiving their equipment back and the internal reviewer who will edit this draft before it ships.
 
@@ -319,18 +320,22 @@ function quantityPhrase(qty: string | undefined): string {
 
 /**
  * Builds the FPI & Visual Inspection Summary directly from the router data — no LLM call. Like
- * the Dimensional Summary, what this section actually says (scope + a pointer to the Crack Map)
- * is fully determined by data already on hand: bucket count from job metadata, procedure/form
- * numbers pulled straight out of the router's own note text, and whether a crack map was found.
- * The one thing this deliberately never does — same as the AI-drafted version before it — is
- * invent zone-by-zone findings (Tips, Airfoil, Platform, ...); that detail only exists on the
- * hand-marked Crack Map, which no amount of code or AI can read on its own.
+ * the Dimensional Summary, the scope bullets (bucket count from job metadata, procedure/form
+ * numbers pulled straight out of the router's own note text) are fully determined by data already
+ * on hand. What follows depends on whether this job's turbine model + stage/row is one of the
+ * known configurations (see fpiZones.ts, built from a tech rep's own list of the real zone names
+ * per model/stage): when it is, each zone gets its own subheading with a bracketed prompt ready
+ * for the tech rep to fill in -- the same scaffold structure APG's real reports actually use, just
+ * without fabricated finding text (that detail only exists on the hand-marked Crack Map, which no
+ * amount of code or AI can read on its own). When the model/stage can't be determined, this falls
+ * back to a single generic "Findings:" pointer at the Crack Map instead of guessing at zones that
+ * might not even apply to this part.
  *
  * `router` is optional: some jobs genuinely have no "IA Router" file on hand (renamed, not yet
  * uploaded, one-off job structure). Rather than leaving the section fully blank in that case, this
- * still drafts the scope/Crack-Map-pointer skeleton from job metadata alone -- just without the
- * procedure/form-number clause, which only the router's note text can supply. A tech rep reviewing
- * a real draft with an honest gap is a better starting point than an empty textbox.
+ * still drafts the scope/zone skeleton from job metadata alone -- just without the procedure/form-
+ * number clause, which only the router's note text can supply. A tech rep reviewing a real draft
+ * with an honest gap is a better starting point than an empty textbox.
  */
 export function buildFpiVisualDraft(router: ParsedRouter | undefined, ctx: DraftContext, crackMapAvailable: boolean): string {
   let scopeClause = "";
@@ -351,14 +356,24 @@ export function buildFpiVisualDraft(router: ParsedRouter | undefined, ctx: Draft
     lines.push("- No router file was found for this job — confirm the procedure/work-instruction number(s) used and add them here.");
   }
   lines.push("");
-  lines.push("Findings:");
-  lines.push(
-    crackMapAvailable
-      ? `- Zone-by-zone finding detail (Tips, Airfoil, Platform, Angel Wings, Shank, and Root Serrations) is documented on the accompanying Crack Map${
-          formNumber ? ` (Form ${formNumber})` : ""
-        }, attached as its own exhibit to this report.`
-      : "- No crack-map source file was found for this job — zone-by-zone finding detail still needs a tech rep's written note before this section is complete."
-  );
+
+  const zones = fpiZonesFor(ctx.metadata.turbineModel, ctx.metadata.component, ctx.metadata.part);
+  const crackMapClause = crackMapAvailable ? `the accompanying Crack Map${formNumber ? ` (Form ${formNumber})` : ""}` : "the Crack Map (no crack-map source file was found for this job)";
+  if (zones) {
+    for (const zone of zones) {
+      lines.push(`${zone}:`);
+      lines.push(`- [Findings from ${crackMapClause}, or "No significant defects noted."]`);
+      lines.push("");
+    }
+    lines.pop(); // drop the trailing blank line left after the last zone
+  } else {
+    lines.push("Findings:");
+    lines.push(
+      crackMapAvailable
+        ? `- Zone-by-zone finding detail is documented on ${crackMapClause}, attached as its own exhibit to this report.`
+        : "- No crack-map source file was found for this job — zone-by-zone finding detail still needs a tech rep's written note before this section is complete."
+    );
+  }
 
   return lines.join("\n");
 }
@@ -366,6 +381,8 @@ export function buildFpiVisualDraft(router: ParsedRouter | undefined, ctx: Draft
 export async function draftFpiVisual(router: ParsedRouter | undefined, ctx: DraftContext, crackMapAvailable: boolean): Promise<string> {
   const fpiOps = router?.operations.filter((o) => o.active && /NDT|FPI|penetrant/i.test(o.label)) ?? [];
   const fpiOpsSummary = fpiOps.map((o) => `- [${o.sequence}] ${o.label}${o.note ? `: ${o.note}` : ""}`).join("\n");
+  const zones = fpiZonesFor(ctx.metadata.turbineModel, ctx.metadata.component, ctx.metadata.part);
+  const crackMapNote = crackMapAvailable ? "the accompanying Crack Map" : "the Crack Map — no crack-map source file was found for this job";
   const prompt = withInstructionSuffix(
     `Draft the "FPI & Visual Inspection Summary" section for job #${ctx.metadata.jobNumber} (${ctx.metadata.customer}, ${ctx.metadata.part}, qty ${ctx.metadata.quantity}).
 
@@ -375,9 +392,13 @@ ${
     : "No router file was found for this job, so there is no procedural router text to draw scope/procedure-number detail from — state the inspection was performed on all buckets and leave the specific procedure/work-instruction number as a bracketed placeholder for the tech rep to fill in, rather than inventing one."
 }
 
-APG's real report structures this section as one subheading per inspection zone (Tips, Airfoil, Platform, LE Angel Wing, TE Angel Wing, CC & CV Platform Shank, Side Shank/Pin Slots, Root Serrations), each with a bullet or two of that zone's findings. You do NOT have zone-level finding data here — only the procedural router text above, if any — so do not invent zone bullets with counts or defect types. Instead, use exactly two subheadings:
-- "FPI & Visual Inspection:" with bullets covering what was performed (scope/procedure, drawn only from the router text above when present).
-- "Findings:" with one bullet stating that zone-by-zone finding detail is documented on the accompanying Crack Map${crackMapAvailable ? "" : " — and noting that no crack-map source file was found for this job, so zone-level findings still need a tech rep's written note"}, attached as its own exhibit to this report.`,
+APG's real report structures this section as one subheading per inspection zone, each with a bullet or two of that zone's findings. You do NOT have zone-level finding data here — only the procedural router text above, if any — so do not invent zone bullets with counts or defect types.
+
+Start with one subheading "FPI & Visual Inspection:" with bullets covering what was performed (scope/procedure, drawn only from the router text above when present). ${
+      zones
+        ? `Then, for this specific part (${ctx.metadata.turbineModel || ctx.metadata.component || ctx.metadata.part}), add exactly one subheading per zone, in this order: ${zones.map((z) => `"${z}:"`).join(", ")}. Under each zone's subheading, add exactly one bullet reading "[Findings from ${crackMapNote}, or \\"No significant defects noted.\\"]" verbatim — a placeholder for the tech rep to replace, not a real finding.`
+        : `Then add one subheading "Findings:" with one bullet stating that zone-by-zone finding detail is documented on ${crackMapNote}, attached as its own exhibit to this report.`
+    }`,
     ctx
   );
   return callClaude(prompt);
