@@ -282,6 +282,45 @@ footer.app-header::before {
   margin-bottom: 16px;
 }
 
+/* Small "x" to exclude the auto-detected completed-form PDF from a table section, leaving this
+   app's own re-rendered table for the generated report instead -- sits right at the front of the
+   .section-reason box's own text, not off in a corner, since it's acting directly on the claim
+   that box is making ("the completed form will be embedded"). */
+.exclude-print-pdf-btn {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  line-height: 16px;
+  padding: 0;
+  border: 1px solid #0b3d91;
+  border-radius: 50%;
+  background: #ffffff;
+  color: #0b3d91;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.exclude-print-pdf-btn:hover {
+  background: #0b3d91;
+  color: #ffffff;
+}
+
+.link-button {
+  border: none;
+  background: none;
+  padding: 0;
+  color: #0b3d91;
+  font-size: inherit;
+  font-weight: 600;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.link-button:hover {
+  color: #082a68;
+}
+
 /* Shared look for every text input/textarea in the app (Title/Cover fields, the
    "Revise with instruction" box, the draft textarea) -- border/radius/hover/focus live
    here once instead of duplicated per context, so hovering or focusing any of them

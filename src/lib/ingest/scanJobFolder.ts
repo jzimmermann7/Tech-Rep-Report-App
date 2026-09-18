@@ -308,7 +308,7 @@ async function scanFileBackedSection(section: SectionConfig, files: JobFile[], j
       return {
         ...base,
         status: "ready",
-        statusReason: `No data spreadsheet was found, but the completed form "${printPdfFile.relativePath}" was and will be embedded in the report as-is.`,
+        statusReason: `No data spreadsheet was found, but the completed form was found and will be embedded in the report as-is.`,
         matchedFiles: [printPdfFile],
         printPdfFile,
       };
@@ -410,7 +410,7 @@ async function scanFileBackedSection(section: SectionConfig, files: JobFile[], j
             status: "ready",
             statusReason: hasData
               ? embedPdf
-                ? `Parsed ${parsed.rows.length} row(s) from "${candidate.relativePath}"; the completed form "${embedPdf.relativePath}" will be embedded in the report as-is.`
+                ? `Parsed ${parsed.rows.length} row(s) from "${candidate.relativePath}"; the completed form will be embedded in the report as-is.`
                 : `Parsed ${parsed.rows.length} row(s) from "${candidate.relativePath}".`
               : `Found "${candidate.relativePath}", but this tab is currently blank for this job.`,
             matchedFiles: embedPdf ? [embedPdf] : [candidate],
@@ -483,7 +483,7 @@ async function scanFileBackedSection(section: SectionConfig, files: JobFile[], j
               ...base,
               status: "ready",
               statusReason: resolvedPrintPdf
-                ? `Parsed ${parsed.rows.length} row(s) from "${candidate.relativePath}"; the completed form "${resolvedPrintPdf.relativePath}" will be embedded in the report as-is.`
+                ? `Parsed ${parsed.rows.length} row(s) from "${candidate.relativePath}"; the completed form will be embedded in the report as-is.`
                 : `Parsed ${parsed.rows.length} row(s) from "${candidate.relativePath}".`,
               matchedFiles: [candidate],
               parsedTable: parsed,
@@ -502,7 +502,7 @@ async function scanFileBackedSection(section: SectionConfig, files: JobFile[], j
       return {
         ...base,
         status: "ready",
-        statusReason: `The data spreadsheet appears blank or unreadable, but the completed form "${printPdfFile.relativePath}" was found and will be embedded in the report as-is.`,
+        statusReason: `The data spreadsheet appears blank or unreadable, but the completed form was found and will be embedded in the report as-is.`,
         matchedFiles: [printPdfFile],
         printPdfFile,
       };

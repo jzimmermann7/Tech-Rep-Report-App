@@ -330,9 +330,9 @@ function ManualAttachmentUpload({
   const inputId = `manual-attach-${sectionId}`;
 
   // Accepts one or more files at once (a multi-page cert scanned as separate images, or just
-  // several to compare) and replaces whatever was manually attached here before -- see the
-  // manual-attachment route's own comment for why a fresh upload clears the old one out rather
-  // than piling up alongside it.
+  // several to compare) and adds them alongside whatever's already matched/attached -- doesn't
+  // touch the current selection, since a tech rep adding a file often just wants a second one on
+  // hand to compare or swap to later, not to immediately replace what's already selected.
   const handleFiles = async (files: FileList) => {
     setBusy(true);
     try {
@@ -343,17 +343,6 @@ function ManualAttachmentUpload({
       const res = await fetch("/api/manual-attachment", { method: "POST", body: form });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Upload failed");
-      // Make the fresh upload the active selection outright -- switching out a wrong auto-match
-      // (or an earlier manual attachment) should take effect immediately, not leave the tech rep
-      // to also go find and click it in a candidate picker afterward.
-      const relativePaths: string[] = data.relativePaths ?? [];
-      if (relativePaths[0]) {
-        await fetch("/api/section-state", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ jobRoot, sectionId, patch: { selectedAttachmentPath: relativePaths[0] } }),
-        });
-      }
       // The file(s) now sit inside the job folder itself (see manualAttachmentsFor's convention),
       // so a full rescan is what actually picks them up -- there's no lighter-weight update that
       // would parse it, resolve a print-PDF pairing, etc.
@@ -380,11 +369,10 @@ function ManualAttachmentUpload({
         }}
       />
       <label htmlFor={inputId} className={`manual-attachment-btn ${busy ? "busy" : ""}`}>
-        📎 {busy ? "Uploading…" : "Insert file manually"}
+        📎 {busy ? "Uploading…" : "Add file manually"}
       </label>
       <p className="manual-attachment-hint">
-        {hint ?? "Didn't find it automatically? If you have this file somewhere else on your computer, attach it here."} Selecting more than one
-        file, or uploading again later, replaces whatever was manually attached here before.
+        {hint ?? "Didn't find it automatically? If you have this file somewhere else on your computer, add it here."}
       </p>
     </div>
   );
@@ -408,7 +396,7 @@ function TablePreview({ jobRoot, section, onRefresh }: { jobRoot: string; sectio
       jobRoot={jobRoot}
       sectionId={section.id}
       onUploaded={onRefresh}
-      hint={table || section.printPdfFile ? "Not the right file? Insert a different one manually here." : undefined}
+      hint={table || section.printPdfFile ? "Not the right file? Add the correct one manually here." : undefined}
     />
   );
 
@@ -858,7 +846,7 @@ function AttachAsIs({ jobRoot, section, onRefresh }: { jobRoot: string; section:
             jobRoot={jobRoot}
             sectionId={section.id}
             onUploaded={onRefresh}
-            hint="Not the right file? Insert a different one manually here."
+            hint="Not the right file? Add the correct one manually here."
           />
         )}
       </div>
@@ -975,6 +963,21 @@ function SectionPanel({
   onRefresh: () => void;
   onReviewed: (acknowledged: boolean) => void;
 }) {
+  // The completed print-ready PDF scanJobFolder.ts found for this section (see PRINT_PDF_SECTIONS)
+  // is normally embedded verbatim over this app's own re-rendered table -- almost always right,
+  // but the tech rep always has a direct way to say "no, just use the table" instead. Excluding it
+  // doesn't change what's found on disk, just whether generateReport.ts uses it (see
+  // renderReportHtml.ts's own excludePrintPdf check) -- toggled back on the same way.
+  const setExcludePrintPdf = async (excluded: boolean) => {
+    await fetch("/api/section-state", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ jobRoot, sectionId: section.id, patch: { excludePrintPdf: excluded } }),
+    });
+    onRefresh();
+  };
+  const printPdfExcluded = Boolean(section.printPdfFile) && Boolean(section.state.excludePrintPdf);
+
   return (
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
@@ -987,7 +990,27 @@ function SectionPanel({
         <StatusBadge status={section.status} acknowledged={section.state.acknowledged} />
         <span className="confidence-tag">automation confidence: {section.automationConfidence}</span>
       </div>
-      <p className="section-reason">{section.statusReason}</p>
+      {printPdfExcluded ? (
+        <p className="section-reason">
+          The completed form found for this section is excluded — this section&apos;s own table will be used in the generated report instead.{" "}
+          <button className="link-button" onClick={() => setExcludePrintPdf(false)}>
+            Use the completed form instead
+          </button>
+        </p>
+      ) : (
+        <p className="section-reason" style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
+          {section.printPdfFile && (
+            <button
+              className="exclude-print-pdf-btn"
+              title="Don't use the auto-detected completed form — use this section's own table instead"
+              onClick={() => setExcludePrintPdf(true)}
+            >
+              ✕
+            </button>
+          )}
+          <span>{section.statusReason}</span>
+        </p>
+      )}
       {section.confidenceNote && <p className="confidence-note">{section.confidenceNote}</p>}
 
       {/* Keyed on lastGeneratedAt too, not just section.id -- a Rescan while this section is

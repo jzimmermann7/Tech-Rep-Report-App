@@ -49,18 +49,12 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    // A fresh upload replaces whatever was manually attached here before, rather than piling up
-    // alongside it -- a tech rep swapping in the right file after realizing an earlier manual
-    // attachment was wrong expects the old one gone, not still sitting in the candidate list.
-    // Clearing out the directory's own *files* first, rather than fs.rm-ing the directory itself
-    // recursively, deliberately avoids an rmdir call entirely -- confirmed against this app's own
-    // real T:\ network share that removing (not just reading/writing into) a directory there can
-    // fail with a flat EPERM even when nothing else holds it open, the same class of flakiness the
-    // PDF generator's own readFileWithRetry already works around for reads. Deleting each file
-    // individually and leaving the (now-empty) directory in place sidesteps that path completely.
+    // Adds alongside whatever's already manually attached here, rather than replacing it -- a
+    // tech rep uploading a file often just wants a second one on hand to compare or swap to
+    // later (see scanJobFolder.ts's manualFiles handling: every file here becomes a candidate,
+    // not necessarily what's selected). Re-uploading under the exact same filename still
+    // overwrites just that one file, same as saving over it anywhere else.
     await fs.mkdir(destDir, { recursive: true });
-    const existing = await fs.readdir(destDir).catch(() => [] as string[]);
-    await Promise.all(existing.map((name) => fs.unlink(path.join(destDir, name)).catch(() => {})));
     const relativePaths: string[] = [];
     for (let i = 0; i < files.length; i++) {
       const bytes = Buffer.from(await files[i].arrayBuffer());
