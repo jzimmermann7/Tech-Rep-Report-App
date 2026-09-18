@@ -340,7 +340,7 @@ function ManualAttachmentUpload({
   // several to compare) and adds them alongside whatever's already matched/attached -- doesn't
   // touch the current selection, since a tech rep adding a file often just wants a second one on
   // hand to compare or swap to later, not to immediately replace what's already selected.
-  const handleFiles = async (files: FileList) => {
+  const handleFiles = async (files: File[]) => {
     setBusy(true);
     try {
       const form = new FormData();
@@ -384,8 +384,8 @@ function ManualAttachmentUpload({
     e.preventDefault();
     dragDepth.current = 0;
     setDragging(false);
-    const files = e.dataTransfer.files;
-    if (files && files.length > 0) handleFiles(files);
+    const files = Array.from(e.dataTransfer.files);
+    if (files.length > 0) handleFiles(files);
   };
 
   const removeFile = async (baseName: string) => {
@@ -422,9 +422,15 @@ function ManualAttachmentUpload({
           className="manual-attachment-input"
           disabled={busy}
           onChange={(e) => {
-            const files = e.target.files;
+            // Snapshotted into a real array *before* clearing the input -- e.target.files is a
+            // live FileList tied to the input's own current value, not an independent copy, so
+            // clearing e.target.value right after reading it (to let picking the exact same file
+            // again re-fire onChange) could empty this same reference out from under handleFiles
+            // before it ever ran. That's exactly what silently ate every click-to-browse upload:
+            // drag-and-drop was never affected since DataTransfer.files isn't tied to any input.
+            const files = Array.from(e.target.files ?? []);
             e.target.value = "";
-            if (files && files.length > 0) handleFiles(files);
+            if (files.length > 0) handleFiles(files);
           }}
         />
         <label htmlFor={inputId} className={`manual-attachment-btn ${busy ? "busy" : ""}`}>
