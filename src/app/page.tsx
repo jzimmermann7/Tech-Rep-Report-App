@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import type { JobScanResult, SectionScanResult } from "@/lib/ingest/scanJobFolder";
+import type { JobFile } from "@/lib/ingest/fileWalk";
 import { COVER_FIELD_ORDER } from "@/lib/ingest/jobMetadata";
 import type { SectionState } from "@/lib/state/jobState";
 
@@ -318,15 +319,20 @@ const MANUAL_ATTACHMENT_SECTIONS = new Set([
 function ManualAttachmentUpload({
   jobRoot,
   sectionId,
+  manualAttachments,
   onUploaded,
   hint,
 }: {
   jobRoot: string;
   sectionId: string;
+  /** Everything currently manually attached to this section (see SectionScanResult.
+   * manualAttachments) -- shown as removable chips right next to the upload button. */
+  manualAttachments?: JobFile[];
   onUploaded: () => void;
   hint?: string;
 }) {
   const [busy, setBusy] = useState(false);
+  const [removing, setRemoving] = useState<string | undefined>(undefined);
   const inputId = `manual-attach-${sectionId}`;
 
   // Accepts one or more files at once (a multi-page cert scanned as separate images, or just
@@ -354,23 +360,60 @@ function ManualAttachmentUpload({
     }
   };
 
+  const removeFile = async (baseName: string) => {
+    setRemoving(baseName);
+    try {
+      const res = await fetch("/api/manual-attachment", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jobRoot, sectionId, fileName: baseName }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Remove failed");
+      onUploaded();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Remove failed");
+    } finally {
+      setRemoving(undefined);
+    }
+  };
+
   return (
     <div className="manual-attachment">
-      <input
-        id={inputId}
-        type="file"
-        multiple
-        className="manual-attachment-input"
-        disabled={busy}
-        onChange={(e) => {
-          const files = e.target.files;
-          e.target.value = "";
-          if (files && files.length > 0) handleFiles(files);
-        }}
-      />
-      <label htmlFor={inputId} className={`manual-attachment-btn ${busy ? "busy" : ""}`}>
-        📎 {busy ? "Uploading…" : "Add file manually"}
-      </label>
+      <div className="manual-attachment-row">
+        <input
+          id={inputId}
+          type="file"
+          multiple
+          className="manual-attachment-input"
+          disabled={busy}
+          onChange={(e) => {
+            const files = e.target.files;
+            e.target.value = "";
+            if (files && files.length > 0) handleFiles(files);
+          }}
+        />
+        <label htmlFor={inputId} className={`manual-attachment-btn ${busy ? "busy" : ""}`}>
+          📎 {busy ? "Uploading…" : "Insert files manually"}
+        </label>
+        {/* Every file currently manually attached to this section -- hover a chip to reveal its
+            own "x" and pull just that one back out, without disturbing anything else attached
+            here or whatever's currently selected. */}
+        {manualAttachments?.map((f) => (
+          <span key={f.relativePath} className="manual-attachment-chip" title={f.baseName}>
+            <span className="manual-attachment-chip-name">{f.baseName}</span>
+            <button
+              type="button"
+              className="manual-attachment-chip-remove"
+              disabled={removing === f.baseName}
+              onClick={() => removeFile(f.baseName)}
+              title={`Remove ${f.baseName}`}
+            >
+              ✕
+            </button>
+          </span>
+        ))}
+      </div>
       <p className="manual-attachment-hint">
         {hint ?? "Didn't find it automatically? If you have this file somewhere else on your computer, add it here."}
       </p>
@@ -395,6 +438,7 @@ function TablePreview({ jobRoot, section, onRefresh }: { jobRoot: string; sectio
     <ManualAttachmentUpload
       jobRoot={jobRoot}
       sectionId={section.id}
+      manualAttachments={section.manualAttachments}
       onUploaded={onRefresh}
       hint={table || section.printPdfFile ? "Not the right file? Add the correct one manually here." : undefined}
     />
@@ -825,7 +869,9 @@ function AttachAsIs({ jobRoot, section, onRefresh }: { jobRoot: string; section:
     return (
       <div>
         <p className="section-reason">No file found — this exhibit will be missing from the generated report unless you add one to the job folder.</p>
-        {MANUAL_ATTACHMENT_SECTIONS.has(section.id) && <ManualAttachmentUpload jobRoot={jobRoot} sectionId={section.id} onUploaded={onRefresh} />}
+        {MANUAL_ATTACHMENT_SECTIONS.has(section.id) && (
+          <ManualAttachmentUpload jobRoot={jobRoot} sectionId={section.id} manualAttachments={section.manualAttachments} onUploaded={onRefresh} />
+        )}
       </div>
     );
   }
@@ -845,6 +891,7 @@ function AttachAsIs({ jobRoot, section, onRefresh }: { jobRoot: string; section:
           <ManualAttachmentUpload
             jobRoot={jobRoot}
             sectionId={section.id}
+            manualAttachments={section.manualAttachments}
             onUploaded={onRefresh}
             hint="Not the right file? Add the correct one manually here."
           />
@@ -891,7 +938,7 @@ function AttachAsIs({ jobRoot, section, onRefresh }: { jobRoot: string; section:
       </div>
       {/* Escape hatch for when none of the candidates above are actually right. */}
       {MANUAL_ATTACHMENT_SECTIONS.has(section.id) && (
-        <ManualAttachmentUpload jobRoot={jobRoot} sectionId={section.id} onUploaded={onRefresh} />
+        <ManualAttachmentUpload jobRoot={jobRoot} sectionId={section.id} manualAttachments={section.manualAttachments} onUploaded={onRefresh} />
       )}
     </div>
   );

@@ -936,6 +936,61 @@ button.generate-report:active:not(:disabled) {
   cursor: not-allowed;
 }
 
+.manual-attachment-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+/* One chip per file currently manually attached to this section, sitting right next to the
+   upload button -- see ManualAttachmentUpload's own comment. The "x" stays low-contrast until
+   the chip itself is hovered, so a row of several attached files doesn't read as a row of
+   delete buttons at rest. */
+.manual-attachment-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: #ffffff;
+  border: 1px solid #b9cce8;
+  border-radius: 999px;
+  padding: 5px 6px 5px 12px;
+  font-size: 12px;
+  color: #142140;
+  max-width: 260px;
+}
+
+.manual-attachment-chip-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.manual-attachment-chip-remove {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  line-height: 16px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: #b9cce8;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.manual-attachment-chip:hover .manual-attachment-chip-remove {
+  background: #c0263b;
+  color: #ffffff;
+}
+
+.manual-attachment-chip-remove:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
 .manual-attachment-hint {
   margin: 8px 0 0;
   font-size: 12px;

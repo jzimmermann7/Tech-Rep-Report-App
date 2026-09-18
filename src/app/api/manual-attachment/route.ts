@@ -66,3 +66,35 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: err instanceof Error ? err.message : "Failed to save file(s)" }, { status: 500 });
   }
 }
+
+/** Removes one previously manually-attached file -- the "x" a tech rep hovers up on each chip
+ * next to "Insert files manually" in the review screen. Deletes just that one file (fs.unlink),
+ * never the section's whole _Manual Attachments/<sectionId> directory -- see the POST handler's
+ * own commit history for why a recursive directory removal on this app's real network drives
+ * isn't reliable (readFileWithRetry/generateReport.ts hit the same class of flakiness on reads). */
+export async function DELETE(request: NextRequest) {
+  const body = await request.json();
+  const { jobRoot, sectionId, fileName } = body as { jobRoot?: string; sectionId?: string; fileName?: string };
+
+  if (typeof jobRoot !== "string" || !jobRoot) return NextResponse.json({ error: "jobRoot is required" }, { status: 400 });
+  if (typeof sectionId !== "string" || !sectionId || !SAFE_SEGMENT.test(sectionId) || sectionId.startsWith(".")) {
+    return NextResponse.json({ error: "Invalid sectionId" }, { status: 400 });
+  }
+  if (typeof fileName !== "string" || !fileName || !SAFE_SEGMENT.test(fileName)) {
+    return NextResponse.json({ error: "Invalid fileName" }, { status: 400 });
+  }
+
+  const target = path.join(jobRoot, MANUAL_ATTACHMENTS_DIR, sectionId, fileName);
+  const resolvedTarget = path.resolve(target);
+  const resolvedRoot = path.resolve(jobRoot);
+  if (!resolvedTarget.startsWith(resolvedRoot + path.sep)) {
+    return NextResponse.json({ error: "Resolved path escapes the job folder" }, { status: 400 });
+  }
+
+  try {
+    await fs.unlink(resolvedTarget);
+    return NextResponse.json({ ok: true });
+  } catch (err) {
+    return NextResponse.json({ error: err instanceof Error ? err.message : "Failed to remove file" }, { status: 500 });
+  }
+}
