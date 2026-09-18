@@ -19,6 +19,34 @@ export async function POST(request: NextRequest) {
 
     const sections = scanResult.sections.map((section) => {
       const sectionState = state.sections[section.id] ?? {};
+
+      let matchedFiles = section.matchedFiles;
+      let status = section.status;
+      let statusReason = section.statusReason;
+      // A tech rep can reject one of the auto-matched candidates for an attach-as-is exhibit
+      // outright (see AttachAsIs's own "x" on each candidate) -- persisted by relativePath rather
+      // than deleting the file itself, since the file is often still legitimately in the job
+      // folder, just not the right one for this section. Filtered back out here on every scan so
+      // a rejected candidate doesn't keep reappearing after a rescan, and status/statusReason are
+      // recomputed the same way scanJobFolder itself would for whatever's left.
+      if (section.generation === "attach-as-is" && sectionState.excludedMatchedPaths?.length) {
+        const excluded = new Set(sectionState.excludedMatchedPaths);
+        const filtered = matchedFiles.filter((f) => !excluded.has(f.relativePath));
+        if (filtered.length !== matchedFiles.length) {
+          matchedFiles = filtered;
+          if (filtered.length === 0) {
+            status = "missing";
+            statusReason = "No matching source file found in the job folder.";
+          } else if (filtered.length === 1) {
+            status = "ready";
+            statusReason = `Matched "${filtered[0].relativePath}".`;
+          } else {
+            status = "needs-attention";
+            statusReason = `${filtered.length} candidate files matched; using "${filtered[0].relativePath}" by default — pick the right one below.`;
+          }
+        }
+      }
+
       // Every narrative section (I&A Summary, FPI/Visual, ...) still drafts a best-effort partial
       // from whatever job metadata is on hand even when its usual source data wasn't found (see
       // autoDraftJob's own comments) -- so "missing" here would be actively misleading once that
@@ -28,12 +56,12 @@ export async function POST(request: NextRequest) {
       // is the true state -- something was written, but from thinner source data than usual, so it
       // needs a closer read than a normal "ready" section would.
       const hasDraftedContent = section.generation === "llm-narrative" && Boolean(sectionState.content?.trim());
-      const status = section.status === "missing" && hasDraftedContent ? "needs-attention" : section.status;
-      const statusReason =
-        status !== section.status
-          ? `${section.statusReason} A draft was still generated from the available job metadata — review it carefully, since the usual source data wasn't found.`
-          : section.statusReason;
-      return { ...section, status, statusReason, state: sectionState };
+      const effectiveStatus = status === "missing" && hasDraftedContent ? "needs-attention" : status;
+      const effectiveStatusReason =
+        effectiveStatus !== status
+          ? `${statusReason} A draft was still generated from the available job metadata — review it carefully, since the usual source data wasn't found.`
+          : statusReason;
+      return { ...section, matchedFiles, status: effectiveStatus, statusReason: effectiveStatusReason, state: sectionState };
     });
 
     return NextResponse.json({ ...scanResult, sections });

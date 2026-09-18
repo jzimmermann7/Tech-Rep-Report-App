@@ -32,6 +32,12 @@ export interface SectionState {
    * matched the naming pattern: the tech rep's own pick of which one is actually the real
    * exhibit, by relativePath. Overrides the auto-picked candidate for report generation. */
   selectedAttachmentPath?: string;
+  /** For attach-as-is sections: candidate files (by relativePath) the tech rep has explicitly
+   * rejected as wrong via the "x" on that candidate -- e.g. a Purchase Requisition that happened
+   * to match the Chem Test filename pattern. The file itself is left alone on disk (it may still
+   * be legitimate, just not for THIS section); only filtered back out of matchedFiles on every
+   * scan (see /api/scan) so a rejected candidate doesn't keep reappearing on rescan. */
+  excludedMatchedPaths?: string[];
   /** For table-from-source sections (Serial Number List, Height Dim Form, Dovetail Dimension,
    * Wall Thickness): manual corrections to individual cells of the freshly-parsed table -- a
    * typo'd serial number, a re-measured value, etc. Keyed "<row index>:<column name>" against
