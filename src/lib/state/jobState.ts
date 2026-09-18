@@ -43,6 +43,13 @@ export interface SectionState {
    * typed remarks standing in for what would be handwritten on the paper form, not one of this
    * app's own automated notes (which live in ParsedTable.notes instead). */
   tableNotes?: string;
+  /** For table-from-source sections where a completed, print-ready PDF of the real form was also
+   * found on disk (see scanJobFolder.ts's PRINT_PDF_SECTIONS): true to leave that auto-detected
+   * PDF out of the generated report and use this app's own re-rendered table instead. The auto-
+   * match is usually right, but the tech rep always has a direct way to say "no, just use the
+   * table" -- same "human pick overrides the automatic one" convention as selectedAttachmentPath
+   * above, just an exclude rather than a swap since there's only ever one auto-detected PDF here. */
+  excludePrintPdf?: boolean;
 }
 
 export interface JobState {

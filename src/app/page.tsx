@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { JobScanResult, SectionScanResult } from "@/lib/ingest/scanJobFolder";
+import type { JobFile } from "@/lib/ingest/fileWalk";
 import { COVER_FIELD_ORDER } from "@/lib/ingest/jobMetadata";
 import type { SectionState } from "@/lib/state/jobState";
 
@@ -318,29 +319,39 @@ const MANUAL_ATTACHMENT_SECTIONS = new Set([
 function ManualAttachmentUpload({
   jobRoot,
   sectionId,
+  manualAttachments,
   onUploaded,
   hint,
 }: {
   jobRoot: string;
   sectionId: string;
+  /** Everything currently manually attached to this section (see SectionScanResult.
+   * manualAttachments) -- shown as removable chips right next to the upload button. */
+  manualAttachments?: JobFile[];
   onUploaded: () => void;
   hint?: string;
 }) {
   const [busy, setBusy] = useState(false);
+  const [removing, setRemoving] = useState<string | undefined>(undefined);
+  const [dragging, setDragging] = useState(false);
   const inputId = `manual-attach-${sectionId}`;
 
-  const handleFile = async (file: File) => {
+  // Accepts one or more files at once (a multi-page cert scanned as separate images, or just
+  // several to compare) and adds them alongside whatever's already matched/attached -- doesn't
+  // touch the current selection, since a tech rep adding a file often just wants a second one on
+  // hand to compare or swap to later, not to immediately replace what's already selected.
+  const handleFiles = async (files: File[]) => {
     setBusy(true);
     try {
       const form = new FormData();
       form.append("jobRoot", jobRoot);
       form.append("sectionId", sectionId);
-      form.append("file", file);
+      for (const file of files) form.append("file", file);
       const res = await fetch("/api/manual-attachment", { method: "POST", body: form });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Upload failed");
-      // The file now sits inside the job folder itself (see manualAttachmentsFor's convention),
-      // so a full rescan is what actually picks it up -- there's no lighter-weight update that
+      // The file(s) now sit inside the job folder itself (see manualAttachmentsFor's convention),
+      // so a full rescan is what actually picks them up -- there's no lighter-weight update that
       // would parse it, resolve a print-PDF pairing, etc.
       onUploaded();
     } catch (e) {
@@ -350,23 +361,103 @@ function ManualAttachmentUpload({
     }
   };
 
+  // Counts nested drag-enter/leave pairs rather than toggling on every one -- dragging over a
+  // child element (the button, a chip) fires its own enter/leave against the same drop zone, and
+  // without counting, that flickers the "dragging" highlight off the instant the cursor crosses
+  // into any of them instead of staying on for the whole time something's dragged over the box.
+  const dragDepth = useRef(0);
+  const onDragEnter = (e: React.DragEvent) => {
+    e.preventDefault();
+    dragDepth.current += 1;
+    if (e.dataTransfer.types.includes("Files")) setDragging(true);
+  };
+  const onDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    dragDepth.current = Math.max(0, dragDepth.current - 1);
+    if (dragDepth.current === 0) setDragging(false);
+  };
+  const onDragOver = (e: React.DragEvent) => {
+    // Required for onDrop to ever fire at all -- a plain <div> refuses drops by default.
+    e.preventDefault();
+  };
+  const onDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    dragDepth.current = 0;
+    setDragging(false);
+    const files = Array.from(e.dataTransfer.files);
+    if (files.length > 0) handleFiles(files);
+  };
+
+  const removeFile = async (baseName: string) => {
+    setRemoving(baseName);
+    try {
+      const res = await fetch("/api/manual-attachment", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jobRoot, sectionId, fileName: baseName }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Remove failed");
+      onUploaded();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Remove failed");
+    } finally {
+      setRemoving(undefined);
+    }
+  };
+
   return (
-    <div className="manual-attachment">
-      <input
-        id={inputId}
-        type="file"
-        className="manual-attachment-input"
-        disabled={busy}
-        onChange={(e) => {
-          const file = e.target.files?.[0];
-          e.target.value = "";
-          if (file) handleFile(file);
-        }}
-      />
-      <label htmlFor={inputId} className={`manual-attachment-btn ${busy ? "busy" : ""}`}>
-        📎 {busy ? "Uploading…" : "Insert file manually"}
-      </label>
-      <p className="manual-attachment-hint">{hint ?? "Didn't find it automatically? If you have this file somewhere else on your computer, attach it here."}</p>
+    <div
+      className={`manual-attachment ${dragging ? "dragging" : ""}`}
+      onDragEnter={onDragEnter}
+      onDragOver={onDragOver}
+      onDragLeave={onDragLeave}
+      onDrop={onDrop}
+    >
+      <div className="manual-attachment-row">
+        <input
+          id={inputId}
+          type="file"
+          multiple
+          className="manual-attachment-input"
+          disabled={busy}
+          onChange={(e) => {
+            // Snapshotted into a real array *before* clearing the input -- e.target.files is a
+            // live FileList tied to the input's own current value, not an independent copy, so
+            // clearing e.target.value right after reading it (to let picking the exact same file
+            // again re-fire onChange) could empty this same reference out from under handleFiles
+            // before it ever ran. That's exactly what silently ate every click-to-browse upload:
+            // drag-and-drop was never affected since DataTransfer.files isn't tied to any input.
+            const files = Array.from(e.target.files ?? []);
+            e.target.value = "";
+            if (files.length > 0) handleFiles(files);
+          }}
+        />
+        <label htmlFor={inputId} className={`manual-attachment-btn ${busy ? "busy" : ""}`}>
+          📎 {busy ? "Uploading…" : "Insert files manually"}
+        </label>
+        {/* Every file currently manually attached to this section -- hover a chip to reveal its
+            own "x" and pull just that one back out, without disturbing anything else attached
+            here or whatever's currently selected. */}
+        {manualAttachments?.map((f) => (
+          <span key={f.relativePath} className="manual-attachment-chip" title={f.baseName}>
+            <span className="manual-attachment-chip-name">{f.baseName}</span>
+            <button
+              type="button"
+              className="manual-attachment-chip-remove"
+              disabled={removing === f.baseName}
+              onClick={() => removeFile(f.baseName)}
+              title={`Remove ${f.baseName}`}
+            >
+              ✕
+            </button>
+          </span>
+        ))}
+      </div>
+      <p className="manual-attachment-hint">
+        {hint ?? "Didn't find it automatically? If you have this file somewhere else on your computer, add it here."} Or drag and drop it anywhere
+        in this box.
+      </p>
     </div>
   );
 }
@@ -388,8 +479,9 @@ function TablePreview({ jobRoot, section, onRefresh }: { jobRoot: string; sectio
     <ManualAttachmentUpload
       jobRoot={jobRoot}
       sectionId={section.id}
+      manualAttachments={section.manualAttachments}
       onUploaded={onRefresh}
-      hint={table || section.printPdfFile ? "Not the right file? Insert a different one manually here." : undefined}
+      hint={table || section.printPdfFile ? "Not the right file? Add the correct one manually here." : undefined}
     />
   );
 
@@ -818,7 +910,9 @@ function AttachAsIs({ jobRoot, section, onRefresh }: { jobRoot: string; section:
     return (
       <div>
         <p className="section-reason">No file found — this exhibit will be missing from the generated report unless you add one to the job folder.</p>
-        {MANUAL_ATTACHMENT_SECTIONS.has(section.id) && <ManualAttachmentUpload jobRoot={jobRoot} sectionId={section.id} onUploaded={onRefresh} />}
+        {MANUAL_ATTACHMENT_SECTIONS.has(section.id) && (
+          <ManualAttachmentUpload jobRoot={jobRoot} sectionId={section.id} manualAttachments={section.manualAttachments} onUploaded={onRefresh} />
+        )}
       </div>
     );
   }
@@ -838,8 +932,9 @@ function AttachAsIs({ jobRoot, section, onRefresh }: { jobRoot: string; section:
           <ManualAttachmentUpload
             jobRoot={jobRoot}
             sectionId={section.id}
+            manualAttachments={section.manualAttachments}
             onUploaded={onRefresh}
-            hint="Not the right file? Insert a different one manually here."
+            hint="Not the right file? Add the correct one manually here."
           />
         )}
       </div>
@@ -884,7 +979,7 @@ function AttachAsIs({ jobRoot, section, onRefresh }: { jobRoot: string; section:
       </div>
       {/* Escape hatch for when none of the candidates above are actually right. */}
       {MANUAL_ATTACHMENT_SECTIONS.has(section.id) && (
-        <ManualAttachmentUpload jobRoot={jobRoot} sectionId={section.id} onUploaded={onRefresh} />
+        <ManualAttachmentUpload jobRoot={jobRoot} sectionId={section.id} manualAttachments={section.manualAttachments} onUploaded={onRefresh} />
       )}
     </div>
   );
@@ -956,6 +1051,21 @@ function SectionPanel({
   onRefresh: () => void;
   onReviewed: (acknowledged: boolean) => void;
 }) {
+  // The completed print-ready PDF scanJobFolder.ts found for this section (see PRINT_PDF_SECTIONS)
+  // is normally embedded verbatim over this app's own re-rendered table -- almost always right,
+  // but the tech rep always has a direct way to say "no, just use the table" instead. Excluding it
+  // doesn't change what's found on disk, just whether generateReport.ts uses it (see
+  // renderReportHtml.ts's own excludePrintPdf check) -- toggled back on the same way.
+  const setExcludePrintPdf = async (excluded: boolean) => {
+    await fetch("/api/section-state", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ jobRoot, sectionId: section.id, patch: { excludePrintPdf: excluded } }),
+    });
+    onRefresh();
+  };
+  const printPdfExcluded = Boolean(section.printPdfFile) && Boolean(section.state.excludePrintPdf);
+
   return (
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
@@ -968,7 +1078,27 @@ function SectionPanel({
         <StatusBadge status={section.status} acknowledged={section.state.acknowledged} />
         <span className="confidence-tag">automation confidence: {section.automationConfidence}</span>
       </div>
-      <p className="section-reason">{section.statusReason}</p>
+      {printPdfExcluded ? (
+        <p className="section-reason">
+          The completed form found for this section is excluded — this section&apos;s own table will be used in the generated report instead.{" "}
+          <button className="link-button" onClick={() => setExcludePrintPdf(false)}>
+            Use the completed form instead
+          </button>
+        </p>
+      ) : (
+        <p className="section-reason" style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
+          {section.printPdfFile && (
+            <button
+              className="exclude-print-pdf-btn"
+              title="Don't use the auto-detected completed form — use this section's own table instead"
+              onClick={() => setExcludePrintPdf(true)}
+            >
+              ✕
+            </button>
+          )}
+          <span>{section.statusReason}</span>
+        </p>
+      )}
       {section.confidenceNote && <p className="confidence-note">{section.confidenceNote}</p>}
 
       {/* Keyed on lastGeneratedAt too, not just section.id -- a Rescan while this section is

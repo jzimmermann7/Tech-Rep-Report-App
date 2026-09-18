@@ -451,11 +451,13 @@ export async function renderReportSegments(scan: JobScanResult, state: JobState)
       }
       continue;
     }
-    if (section.printPdfFile) {
+    if (section.printPdfFile && !state.sections[id]?.excludePrintPdf) {
       // A completed, print-ready PDF of this exact form exists (see PRINT_PDF_SECTIONS) --
       // don't render our own table here at all. Flush whatever HTML has accumulated so far as
       // its own segment, drop in the real PDF as its own segment, and keep building HTML after
-      // it -- the real form's pages land at exactly this point in the final document.
+      // it -- the real form's pages land at exactly this point in the final document. Skipped
+      // when the tech rep has explicitly excluded it (see SectionState.excludePrintPdf), falling
+      // through to the re-rendered table below instead.
       flush();
       segments.push({ kind: "pdf", path: section.printPdfFile.absolutePath });
       continue;

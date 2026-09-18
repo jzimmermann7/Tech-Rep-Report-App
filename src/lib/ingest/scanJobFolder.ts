@@ -37,6 +37,13 @@ export interface SectionScanResult {
    * the report embeds this verbatim instead of our own re-rendered table, since the original
    * carries formatting, diagrams, and small details a re-parsed data table can't reproduce. */
   printPdfFile?: JobFile;
+  /** Every file the tech rep has manually attached to this section (see manualAttachmentsFor),
+   * regardless of whether it ended up being the one actually used -- shown in the review screen as
+   * removable chips next to "Insert files manually", separate from matchedFiles (which is
+   * whichever file(s) generation actually settled on). Always present (possibly empty) on a
+   * file-backed section; absent on the llm-vision-select (Photo Set) and dependent-section
+   * branches, which don't go through manualAttachmentsFor at all. */
+  manualAttachments?: JobFile[];
 }
 
 export interface JobScanResult {
@@ -240,6 +247,11 @@ async function scanFileBackedSection(section: SectionConfig, files: JobFile[], j
     automationConfidence: section.automationConfidence,
     alwaysReview: section.alwaysReview,
     confidenceNote: section.confidenceNote,
+    // Computed unconditionally (cheap -- just a filter over the already-loaded file list) so every
+    // return path below carries it automatically, regardless of which branch a given section takes
+    // -- the review screen shows these as removable chips next to "Insert files manually"
+    // (see manualAttachmentsFor's own comment for the on-disk convention).
+    manualAttachments: manualAttachmentsFor(section.id, files),
   };
 
   if (section.generation === "llm-vision-select") {
@@ -280,8 +292,9 @@ async function scanFileBackedSection(section: SectionConfig, files: JobFile[], j
   // A file the tech rep manually attached because the automatic match found nothing (or found
   // the wrong thing) -- see manualAttachmentsFor's own comment. Treated as the highest-priority
   // candidate below, ahead of anything the filename/folder pattern rules turned up on their own,
-  // since a human explicitly chose it.
-  const manualFiles = manualAttachmentsFor(section.id, files);
+  // since a human explicitly chose it. Same list as base.manualAttachments above -- reused here
+  // rather than recomputed.
+  const manualFiles = base.manualAttachments;
   const manualPdf = manualFiles.find((f) => f.ext === ".pdf");
 
   // Computed once, up front, regardless of whether the section's usual data spreadsheet is even
@@ -308,7 +321,7 @@ async function scanFileBackedSection(section: SectionConfig, files: JobFile[], j
       return {
         ...base,
         status: "ready",
-        statusReason: `No data spreadsheet was found, but the completed form "${printPdfFile.relativePath}" was and will be embedded in the report as-is.`,
+        statusReason: `No data spreadsheet was found, but the completed form was found and will be embedded in the report as-is.`,
         matchedFiles: [printPdfFile],
         printPdfFile,
       };
@@ -410,7 +423,7 @@ async function scanFileBackedSection(section: SectionConfig, files: JobFile[], j
             status: "ready",
             statusReason: hasData
               ? embedPdf
-                ? `Parsed ${parsed.rows.length} row(s) from "${candidate.relativePath}"; the completed form "${embedPdf.relativePath}" will be embedded in the report as-is.`
+                ? `Parsed ${parsed.rows.length} row(s) from "${candidate.relativePath}"; the completed form will be embedded in the report as-is.`
                 : `Parsed ${parsed.rows.length} row(s) from "${candidate.relativePath}".`
               : `Found "${candidate.relativePath}", but this tab is currently blank for this job.`,
             matchedFiles: embedPdf ? [embedPdf] : [candidate],
@@ -483,7 +496,7 @@ async function scanFileBackedSection(section: SectionConfig, files: JobFile[], j
               ...base,
               status: "ready",
               statusReason: resolvedPrintPdf
-                ? `Parsed ${parsed.rows.length} row(s) from "${candidate.relativePath}"; the completed form "${resolvedPrintPdf.relativePath}" will be embedded in the report as-is.`
+                ? `Parsed ${parsed.rows.length} row(s) from "${candidate.relativePath}"; the completed form will be embedded in the report as-is.`
                 : `Parsed ${parsed.rows.length} row(s) from "${candidate.relativePath}".`,
               matchedFiles: [candidate],
               parsedTable: parsed,
@@ -502,7 +515,7 @@ async function scanFileBackedSection(section: SectionConfig, files: JobFile[], j
       return {
         ...base,
         status: "ready",
-        statusReason: `The data spreadsheet appears blank or unreadable, but the completed form "${printPdfFile.relativePath}" was found and will be embedded in the report as-is.`,
+        statusReason: `The data spreadsheet appears blank or unreadable, but the completed form was found and will be embedded in the report as-is.`,
         matchedFiles: [printPdfFile],
         printPdfFile,
       };
