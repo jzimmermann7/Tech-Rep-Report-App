@@ -282,6 +282,45 @@ footer.app-header::before {
   margin-bottom: 16px;
 }
 
+/* Small "x" to exclude the auto-detected completed-form PDF from a table section, leaving this
+   app's own re-rendered table for the generated report instead -- sits right at the front of the
+   .section-reason box's own text, not off in a corner, since it's acting directly on the claim
+   that box is making ("the completed form will be embedded"). */
+.exclude-print-pdf-btn {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  line-height: 16px;
+  padding: 0;
+  border: 1px solid #0b3d91;
+  border-radius: 50%;
+  background: #ffffff;
+  color: #0b3d91;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.exclude-print-pdf-btn:hover {
+  background: #0b3d91;
+  color: #ffffff;
+}
+
+.link-button {
+  border: none;
+  background: none;
+  padding: 0;
+  color: #0b3d91;
+  font-size: inherit;
+  font-weight: 600;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.link-button:hover {
+  color: #082a68;
+}
+
 /* Shared look for every text input/textarea in the app (Title/Cover fields, the
    "Revise with instruction" box, the draft textarea) -- border/radius/hover/focus live
    here once instead of duplicated per context, so hovering or focusing any of them
@@ -856,6 +895,16 @@ button.generate-report:active:not(:disabled) {
   border: 2px dashed #b9cce8;
   border-radius: 8px;
   background: #f7fafd;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+
+/* A file dragged over the box from the desktop/Explorer -- same navy the rest of the app uses to
+   mean "this is active/selected", so it reads as a real drop target the instant something's
+   dragged over it, not just the resting dashed-border box. */
+.manual-attachment.dragging {
+  border-color: #0b3d91;
+  border-style: solid;
+  background: #eaf2fc;
 }
 
 .manual-attachment-input {
@@ -895,6 +944,61 @@ button.generate-report:active:not(:disabled) {
 .manual-attachment-btn.busy {
   opacity: 0.6;
   cursor: not-allowed;
+}
+
+.manual-attachment-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+/* One chip per file currently manually attached to this section, sitting right next to the
+   upload button -- see ManualAttachmentUpload's own comment. The "x" stays low-contrast until
+   the chip itself is hovered, so a row of several attached files doesn't read as a row of
+   delete buttons at rest. */
+.manual-attachment-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: #ffffff;
+  border: 1px solid #b9cce8;
+  border-radius: 999px;
+  padding: 5px 6px 5px 12px;
+  font-size: 12px;
+  color: #142140;
+  max-width: 260px;
+}
+
+.manual-attachment-chip-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.manual-attachment-chip-remove {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  line-height: 16px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: #b9cce8;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.manual-attachment-chip:hover .manual-attachment-chip-remove {
+  background: #c0263b;
+  color: #ffffff;
+}
+
+.manual-attachment-chip-remove:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
 }
 
 .manual-attachment-hint {
