@@ -894,6 +894,7 @@ function AttachAsIs({ jobRoot, section, onRefresh }: { jobRoot: string; section:
   // selection from `section`) whenever the reviewer switches sections — no sync effect needed.
   const [selected, setSelected] = useState<string | undefined>(section.state.selectedAttachmentPath ?? candidates[0]?.relativePath);
   const [hovered, setHovered] = useState<string | undefined>(undefined);
+  const [excluding, setExcluding] = useState<string | undefined>(undefined);
 
   const choose = async (relativePath: string) => {
     setSelected(relativePath);
@@ -902,6 +903,30 @@ function AttachAsIs({ jobRoot, section, onRefresh }: { jobRoot: string; section:
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ jobRoot, sectionId: section.id, patch: { selectedAttachmentPath: relativePath } }),
     });
+  };
+
+  // Rejects a wrong auto-matched candidate outright -- e.g. a Purchase Requisition that happened
+  // to match the Chem Test filename pattern (see excludedMatchedPaths's own comment). The file
+  // itself is left alone on disk; only its relativePath is remembered so /api/scan filters it back
+  // out of matchedFiles on every future rescan, instead of it reappearing every time.
+  const excludeCandidate = async (relativePath: string) => {
+    setExcluding(relativePath);
+    try {
+      const nextExcluded = [...(section.state.excludedMatchedPaths ?? []), relativePath];
+      const res = await fetch("/api/section-state", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jobRoot, sectionId: section.id, patch: { excludedMatchedPaths: nextExcluded } }),
+      });
+      if (!res.ok) throw new Error("Failed to remove candidate");
+      if (selected === relativePath) setSelected(undefined);
+      if (hovered === relativePath) setHovered(undefined);
+      onRefresh();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Failed to remove candidate");
+    } finally {
+      setExcluding(undefined);
+    }
   };
 
   const fileUrl = (relativePath: string) => `/api/photo-file?jobRoot=${encodeURIComponent(jobRoot)}&path=${encodeURIComponent(relativePath)}`;
@@ -920,8 +945,19 @@ function AttachAsIs({ jobRoot, section, onRefresh }: { jobRoot: string; section:
   if (candidates.length === 1) {
     return (
       <div>
-        <p className="section-reason">
-          Attached as-is: <strong>{candidates[0].relativePath}</strong>
+        <p className="section-reason" style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
+          <button
+            type="button"
+            className="exclude-print-pdf-btn"
+            disabled={excluding === candidates[0].relativePath}
+            onClick={() => excludeCandidate(candidates[0].relativePath)}
+            title="Not the right file — stop matching it automatically for this section"
+          >
+            ✕
+          </button>
+          <span>
+            Attached as-is: <strong>{candidates[0].relativePath}</strong>
+          </span>
         </p>
         {/* Always available, even for a confident filename match -- automatic matching can still
             pick the wrong file (confirmed on a real job: a Purchase Requisition happened to match
@@ -960,15 +996,26 @@ function AttachAsIs({ jobRoot, section, onRefresh }: { jobRoot: string; section:
       <div className="attachment-picker">
         <div className="attachment-candidates">
           {candidates.map((f) => (
-            <button
+            <div
               key={f.relativePath}
               className={`attachment-candidate ${selected === f.relativePath ? "selected" : ""}`}
-              onClick={() => choose(f.relativePath)}
               onMouseEnter={() => setHovered(f.relativePath)}
               onMouseLeave={() => setHovered(undefined)}
             >
-              {f.relativePath}
-            </button>
+              <button type="button" className="attachment-candidate-select" onClick={() => choose(f.relativePath)}>
+                {selected === f.relativePath ? "✓ " : ""}
+                {f.relativePath}
+              </button>
+              <button
+                type="button"
+                className="attachment-candidate-remove"
+                disabled={excluding === f.relativePath}
+                onClick={() => excludeCandidate(f.relativePath)}
+                title={`Not this one — remove "${f.relativePath}" from the candidate list`}
+              >
+                ✕
+              </button>
+            </div>
           ))}
         </div>
         {previewTarget && (

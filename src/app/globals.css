@@ -831,38 +831,84 @@ button.generate-report:active:not(:disabled) {
   margin-top: 10px;
 }
 
+/* No longer itself a <button> -- wraps a "select" button (the file name, most of the row) and a
+   small "remove" button (the "x", see .attachment-candidate-remove) side by side, since a button
+   can't nest inside another button in valid HTML. */
 .attachment-candidate {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 2px;
   width: 100%;
-  text-align: left;
   background: #ffffff;
-  color: #1a1a1a;
   border: 2px solid #d5e1f2;
   border-radius: 8px;
-  padding: 10px 14px;
-  font-weight: 600;
-  font-size: 13px;
-  box-shadow: none;
-  word-break: break-word;
+  padding: 2px 6px 2px 2px;
 }
 
 .attachment-candidate:hover:not(.selected) {
   border-color: #0b3d91;
+}
+
+.attachment-candidate.selected {
+  border-color: #1a7431;
+  background: #f2faf4;
+}
+
+.attachment-candidate-select {
+  flex: 1;
+  text-align: left;
+  background: none;
+  border: none;
+  box-shadow: none;
+  padding: 8px 8px;
+  font-weight: 600;
+  font-size: 13px;
+  color: #1a1a1a;
+  word-break: break-word;
+}
+
+.attachment-candidate-select:hover:not(:disabled) {
   /* The generic button:hover rule (see its own comment further up this file) fills the whole
      button navy on hover, same as any other button -- that rule doesn't touch text color, so
      without this override the candidate's own dark label text sat unreadable on top of it. */
   color: #ffffff;
 }
 
-.attachment-candidate.selected {
-  border-color: #1a7431;
-  background: #f2faf4;
+.attachment-candidate.selected .attachment-candidate-select {
   color: #1a7431;
 }
 
-.attachment-candidate.selected::before {
-  content: "✓ ";
+/* Sits at the end of each candidate row -- lets the tech rep reject a wrong auto-matched
+   candidate outright (e.g. a Purchase Requisition that happened to match the Chem Test filename
+   pattern) rather than just not picking it, so it stops being offered on future rescans too. Same
+   low-contrast-until-hovered treatment as .manual-attachment-chip-remove. */
+.attachment-candidate-remove {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  line-height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: #b9cce8;
+  font-size: 12px;
   font-weight: 700;
+  box-shadow: none;
+}
+
+.attachment-candidate:hover .attachment-candidate-remove {
+  color: #7d93bd;
+}
+
+.attachment-candidate-remove:hover:not(:disabled) {
+  background: #c0263b;
+  color: #ffffff;
+}
+
+.attachment-candidate-remove:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
 }
 
 /* Inline preview panel that appears below the candidate list while hovering one of them --
