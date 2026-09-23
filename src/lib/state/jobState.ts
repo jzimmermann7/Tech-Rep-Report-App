@@ -19,6 +19,12 @@ export interface SectionState {
   /** For the cover section: reviewer overrides/fill-ins for fields with no reliable auto-source
    * (Tech Rep, Customer PO, Prior Repair, Coating, ...), keyed the same as JobMetadata. */
   fields?: Record<string, string>;
+  /** For the cover section: extra label/value rows a tech rep has added beyond the fixed
+   * COVER_FIELD_ORDER set (see CoverEditor's "+ Add field") -- some jobs need to call out
+   * something the standard fields don't cover. An array, not a Record, so insertion order (the
+   * order the tech rep typed them in) is preserved; a row with either side left blank is dropped
+   * from the generated report the same way a blank standard field already is. */
+  customFields?: Array<{ label: string; value: string }>;
   /** True once a human has looked at this section and accepted it, even if status was
    * "needs-attention" or "missing" — lets "Generate Report" proceed deliberately. */
   acknowledged?: boolean;
