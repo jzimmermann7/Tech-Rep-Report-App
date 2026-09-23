@@ -1120,7 +1120,7 @@ function CoverEditor({
                   <input
                     type="text"
                     placeholder="Field name"
-                    style={{ width: "100%", fontWeight: 700 }}
+                    style={{ width: "100%", fontWeight: 700, color: "#ffffff" }}
                     value={f.label}
                     onChange={(e) => editCustomField(i, { label: e.target.value })}
                   />

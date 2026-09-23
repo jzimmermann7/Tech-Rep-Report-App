@@ -628,11 +628,27 @@ button.generate-report:active:not(:disabled) {
   border: none;
 }
 
+/* The fixed field labels (th's own plain text, e.g. "Boxes") inherit the th's white text color
+   for free -- but a custom field's label is an <input> instead of plain text (see CoverEditor),
+   and inputs don't inherit color from an ancestor the way text does, so it needs its own explicit
+   white here, plus a lighter placeholder for the still-empty "Field name" prompt. */
+.cover-table th input[type="text"]::placeholder {
+  color: rgba(255, 255, 255, 0.65);
+}
+
 .cover-table input[type="text"]:focus {
   background: #eaf2fc;
   border-radius: 6px;
   box-shadow: none;
   padding: 2px 8px;
+}
+
+/* Overrides the light-blue focus background above specifically for a custom field's label input
+   -- that one sits on the navy th, where the white text (see the rule above) would go unreadable
+   against the light background the general focus style gives every other cover-table input. */
+.cover-table th input[type="text"]:focus {
+  background: rgba(255, 255, 255, 0.18);
+  color: #ffffff;
   margin: 0 -8px;
 }
 
