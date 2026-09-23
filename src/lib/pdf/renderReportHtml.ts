@@ -403,6 +403,9 @@ export async function renderReportSegments(scan: JobScanResult, state: JobState)
     "preWeldHeatTreatChart",
     "postWeldHeatTreatChart",
     "xRayInspection",
+    "finalNdt",
+    "zNotchDimensions",
+    "bucketDimensions",
     "postCoatHeatTreatChart",
     "finalAgeHeatTreatChart",
     "coatingCertification",
@@ -423,11 +426,13 @@ export async function renderReportSegments(scan: JobScanResult, state: JobState)
     // them (see INLINE_ATTACH_SECTIONS' own comment).
     "finalSerialNumberList",
     "finalScrapReport",
-    "finalSnRecordingSheet",
     "preWeldHeatTreatChart",
     "postWeldHeatTreatChart",
     "xRayInspection",
+    "finalNdt",
     "finalWallThickness",
+    "zNotchDimensions",
+    "bucketDimensions",
     "postCoatHeatTreatChart",
     "finalAgeHeatTreatChart",
     "coatingCertification",
@@ -443,7 +448,7 @@ export async function renderReportSegments(scan: JobScanResult, state: JobState)
   // real gap there should still show as an honest "No data available" page), these four are left
   // out of the generated report entirely rather than printing an empty or "missing" page nobody
   // asked for -- exactly the "conditional logic, not on every report" these were built for.
-  const OMIT_WHEN_EMPTY = new Set(["scrapReport", "snRecordingSheet", "airflowReport", "zDropDimension", "finalScrapReport", "finalSnRecordingSheet", "finalAirflowReport"]);
+  const OMIT_WHEN_EMPTY = new Set(["scrapReport", "snRecordingSheet", "airflowReport", "zDropDimension", "finalScrapReport", "finalAirflowReport"]);
   for (const id of tableSectionIds) {
     const section = sectionsById.get(id);
     if (!section) continue;
