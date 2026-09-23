@@ -462,7 +462,17 @@ function ManualAttachmentUpload({
   );
 }
 
-function TablePreview({ jobRoot, section, onRefresh }: { jobRoot: string; section: SectionWithState; onRefresh: () => void }) {
+function TablePreview({
+  jobRoot,
+  section,
+  onRefresh,
+  patchSectionState,
+}: {
+  jobRoot: string;
+  section: SectionWithState;
+  onRefresh: () => void;
+  patchSectionState: (sectionId: string, patch: Partial<SectionState>) => void;
+}) {
   const table = section.parsedTable;
   // Keyed "<row index>:<column name>" against the table's own row order -- see
   // SectionState.tableEdits / applyTableEdits. Local state so typing doesn't round-trip to the
@@ -530,6 +540,12 @@ function TablePreview({ jobRoot, section, onRefresh }: { jobRoot: string; sectio
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ jobRoot, sectionId: section.id, patch: { tableEdits: edits, tableNotes: notesText } }),
       });
+      // This component remounts fresh (re-deriving `edits`/`notesText` from section.state) every
+      // time its tab is switched away from and back to -- without patching the saved values into
+      // the parent's own `scan` state right here, a save that genuinely succeeded on disk still
+      // looked like it vanished the moment you came back to this tab, because the remount was
+      // reading `section.state` from before this save ever happened.
+      patchSectionState(section.id, { tableEdits: edits, tableNotes: notesText });
       setDirty(false);
     } finally {
       setBusy(false);
@@ -1032,7 +1048,17 @@ function AttachAsIs({ jobRoot, section, onRefresh }: { jobRoot: string; section:
   );
 }
 
-function CoverEditor({ jobRoot, section, metadata }: { jobRoot: string; section: SectionWithState; metadata: JobScanResult["metadata"] }) {
+function CoverEditor({
+  jobRoot,
+  section,
+  metadata,
+  patchSectionState,
+}: {
+  jobRoot: string;
+  section: SectionWithState;
+  metadata: JobScanResult["metadata"];
+  patchSectionState: (sectionId: string, patch: Partial<SectionState>) => void;
+}) {
   // Keyed by section.id in SectionPanel below, so this remounts fresh if the job is rescanned.
   const initial: Record<string, string> = {};
   for (const { key } of COVER_FIELD_ORDER) {
@@ -1040,20 +1066,33 @@ function CoverEditor({ jobRoot, section, metadata }: { jobRoot: string; section:
     initial[key as string] = key === "date" ? raw.split("T")[0] : raw;
   }
   const [values, setValues] = useState(initial);
+  // Extra label/value rows beyond the fixed COVER_FIELD_ORDER set, for whatever a specific job
+  // needs called out that none of the standard fields cover (see SectionState.customFields).
+  const [customFields, setCustomFields] = useState(section.state.customFields ?? []);
   const [busy, setBusy] = useState(false);
 
   const save = async () => {
     setBusy(true);
     try {
+      const patch = { fields: values, customFields };
       await fetch("/api/section-state", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ jobRoot, sectionId: section.id, patch: { fields: values } }),
+        body: JSON.stringify({ jobRoot, sectionId: section.id, patch }),
       });
+      // This component remounts fresh (re-deriving `values`/`customFields` from section.state)
+      // every time its tab is switched away from and back to -- without patching the saved values
+      // into the parent's own `scan` state right here, a save that genuinely succeeded on disk
+      // still looked like it vanished the moment you came back to this tab, because the remount
+      // was reading `section.state` from before this save ever happened.
+      patchSectionState(section.id, patch);
     } finally {
       setBusy(false);
     }
   };
+
+  const editCustomField = (index: number, patch: Partial<{ label: string; value: string }>) =>
+    setCustomFields((prev) => prev.map((f, i) => (i === index ? { ...f, ...patch } : f)));
 
   return (
     <div>
@@ -1073,10 +1112,39 @@ function CoverEditor({ jobRoot, section, metadata }: { jobRoot: string; section:
                 </td>
               </tr>
             ))}
+            {/* Job-specific extras the tech rep added themselves -- own label AND value, since
+                unlike the fixed rows above there's no preset field name for either. */}
+            {customFields.map((f, i) => (
+              <tr key={i}>
+                <th style={{ width: 180, textAlign: "left" }}>
+                  <input
+                    type="text"
+                    placeholder="Field name"
+                    style={{ width: "100%", fontWeight: 700 }}
+                    value={f.label}
+                    onChange={(e) => editCustomField(i, { label: e.target.value })}
+                  />
+                </th>
+                <td style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <input type="text" style={{ width: "100%" }} value={f.value} onChange={(e) => editCustomField(i, { value: e.target.value })} />
+                  <button
+                    type="button"
+                    className="attachment-candidate-remove"
+                    title="Remove this field"
+                    onClick={() => setCustomFields((prev) => prev.filter((_, ri) => ri !== i))}
+                  >
+                    ✕
+                  </button>
+                </td>
+              </tr>
+            ))}
           </tbody>
         </table>
       </div>
       <div className="toolbar">
+        <button type="button" className="secondary" onClick={() => setCustomFields((prev) => [...prev, { label: "", value: "" }])}>
+          + Add field
+        </button>
         <button disabled={busy} onClick={save}>
           {busy ? "Saving..." : "Save"}
         </button>
@@ -1091,12 +1159,14 @@ function SectionPanel({
   metadata,
   onRefresh,
   onReviewed,
+  patchSectionState,
 }: {
   jobRoot: string;
   section: SectionWithState;
   metadata: JobScanResult["metadata"];
   onRefresh: () => void;
   onReviewed: (acknowledged: boolean) => void;
+  patchSectionState: (sectionId: string, patch: Partial<SectionState>) => void;
 }) {
   // The completed print-ready PDF scanJobFolder.ts found for this section (see PRINT_PDF_SECTIONS)
   // is normally embedded verbatim over this app's own re-rendered table -- almost always right,
@@ -1163,10 +1233,14 @@ function SectionPanel({
           turbineModel={metadata.turbineModel}
         />
       )}
-      {section.generation === "table-from-source" && <TablePreview key={section.id} jobRoot={jobRoot} section={section} onRefresh={onRefresh} />}
+      {section.generation === "table-from-source" && (
+        <TablePreview key={section.id} jobRoot={jobRoot} section={section} onRefresh={onRefresh} patchSectionState={patchSectionState} />
+      )}
       {section.generation === "llm-vision-select" && <PhotoSetEditor key={section.id} jobRoot={jobRoot} section={section} />}
       {section.generation === "attach-as-is" && <AttachAsIs key={section.id} jobRoot={jobRoot} section={section} onRefresh={onRefresh} />}
-      {section.generation === "template" && <CoverEditor key={section.id} jobRoot={jobRoot} section={section} metadata={metadata} />}
+      {section.generation === "template" && (
+        <CoverEditor key={section.id} jobRoot={jobRoot} section={section} metadata={metadata} patchSectionState={patchSectionState} />
+      )}
     </div>
   );
 }
@@ -1203,14 +1277,26 @@ export default function Home() {
     await runScan(path);
   };
 
+  // Folds a just-saved patch into this section's state right here in `scan`, instead of only
+  // writing it to disk -- every section editor unmounts and remounts fresh (re-deriving its local
+  // state from section.state) whenever its tab is switched away from and back to, or another
+  // section's edit triggers a re-render. Without this, a save that genuinely succeeded on disk
+  // still looked like it vanished the moment you returned to that tab, because the remount was
+  // reading `scan` from before the save ever happened -- a full onRefresh() rescan would also fix
+  // it, but is far heavier than a plain metadata/table edit needs (it re-walks the whole job
+  // folder and re-drafts every AI section).
+  const patchSectionState = (sectionId: string, patch: Partial<SectionState>) => {
+    setScan((prev) =>
+      prev ? { ...prev, sections: prev.sections.map((s) => (s.id === sectionId ? { ...s, state: { ...s.state, ...patch } } : s)) } : prev
+    );
+  };
+
   // Marking a section reviewed also jumps to the next one in the list — the whole point is to
   // let a tech rep move through the report top-to-bottom without hunting for the next tab
   // themselves. Only advances when marking AS reviewed, not when undoing it.
   const markReviewed = async (sectionId: string, acknowledged: boolean) => {
     if (!jobRoot || !scan) return;
-    setScan((prev) =>
-      prev ? { ...prev, sections: prev.sections.map((s) => (s.id === sectionId ? { ...s, state: { ...s.state, acknowledged } } : s)) } : prev
-    );
+    patchSectionState(sectionId, { acknowledged });
     if (acknowledged) {
       const idx = scan.sections.findIndex((s) => s.id === sectionId);
       const next = scan.sections[idx + 1];
@@ -1342,6 +1428,7 @@ export default function Home() {
             metadata={scan.metadata}
             onRefresh={() => runScan(jobRoot)}
             onReviewed={(acknowledged) => markReviewed(selectedSection.id, acknowledged)}
+            patchSectionState={patchSectionState}
           />
         </main>
       </div>

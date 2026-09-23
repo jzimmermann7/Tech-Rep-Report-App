@@ -341,6 +341,8 @@ export async function renderReportSegments(scan: JobScanResult, state: JobState)
   // Cover page: APG's usual incoming-report look — a large centered logo, the report title, and
   // a left-aligned label/value list with no table borders (not a bordered grid).
   const coverOverrides = state.sections["cover"]?.fields ?? {};
+  const coverRowHtml = (label: string, value: string) =>
+    `<div class="cover-row"><span class="cover-label">${escapeHtml(label)}:</span><span class="cover-value">${escapeHtml(value)}</span></div>`;
   const coverRows = COVER_FIELD_ORDER.map(({ key, label }) => {
     const raw = (coverOverrides[key as string] ?? (scan.metadata[key] as string) ?? "").toString();
     const value = key === "date" ? raw.split("T")[0] : raw;
@@ -349,14 +351,21 @@ export async function renderReportSegments(scan: JobScanResult, state: JobState)
     // A field left blank on the review screen prints as a label with nothing after it, which
     // reads as a missing piece of the report -- drop any row like that instead, for every field.
     .filter(({ value }) => value.trim() !== "")
-    .map(({ label, value }) => `<div class="cover-row"><span class="cover-label">${escapeHtml(label)}:</span><span class="cover-value">${escapeHtml(value)}</span></div>`)
+    .map(({ label, value }) => coverRowHtml(label, value))
+    .join("");
+  // Extra rows a tech rep added for job-specific info the standard fields above don't cover (see
+  // SectionState.customFields) -- same blank-row filtering, since a field added and then left
+  // half-empty shouldn't print any more than a blank standard one does.
+  const customCoverRows = (state.sections["cover"]?.customFields ?? [])
+    .filter(({ label, value }) => label.trim() !== "" && value.trim() !== "")
+    .map(({ label, value }) => coverRowHtml(label, value))
     .join("");
 
   bodyParts.push(`
     <section class="cover">
       <img class="cover-logo" src="${logo}" alt="APG" />
       <h1>${escapeHtml(scan.reportType)}</h1>
-      <div class="cover-fields">${coverRows}</div>
+      <div class="cover-fields">${coverRows}${customCoverRows}</div>
     </section>`);
 
   const narrativeSectionIds = ["iaSummary", "fpiVisual", "dimensionalSummary", "recommendedRepairs"];
