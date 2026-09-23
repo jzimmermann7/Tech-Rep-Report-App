@@ -90,22 +90,6 @@ export const finalReportTemplate: ReportTemplate = {
         "Reads the final-stage workbook's own \"scrap\" tab -- which buckets ended up scrapped by the time of shipment, not just flagged during incoming review. Left out of the generated report entirely when nothing was recorded, same reasoning as the I&A Report's own Scrap Report.",
     },
     {
-      id: "finalSnRecordingSheet",
-      title: "Final Serial Number Recording Sheet",
-      sourceRules: [
-        {
-          kind: "filenamePattern",
-          pattern: /final.*ship.*sn|ds-?0554.*final/i,
-          excludePattern: /no-?ship/i,
-          requiredExtensions: [".xlsx"],
-        },
-      ],
-      generation: "table-from-source",
-      automationConfidence: "high",
-      confidenceNote:
-        "Reads the final-stage workbook's own \"DS-0404 SN Recording Sheet\" tab. Left out of the generated report entirely when nothing was recorded, same reasoning as the I&A Report's own SN Recording Sheet.",
-    },
-    {
       id: "preWeldHeatTreatChart",
       title: "Pre-Weld Heat Treat Chart",
       sourceRules: [{ kind: "filenamePattern", pattern: /pre.?weld/i, requiredExtensions: [".pdf"] }],
@@ -130,6 +114,18 @@ export const finalReportTemplate: ReportTemplate = {
       confidenceNote: "Per Jonathan, only some jobs get X-ray -- no part-type allowlist, just missing when there's no X-ray file for this job. Attached as-is.",
     },
     {
+      // Named "Final NDT.pdf" per a tech rep, no real completed report to reverse-engineer an
+      // exact page position from (unlike most of this template's other sections) -- placed here,
+      // grouped with X-Ray Inspection, since both are NDT-type re-checks; move it if it turns out
+      // to print somewhere else on the real form.
+      id: "finalNdt",
+      title: "Final NDT",
+      sourceRules: [{ kind: "filenamePattern", pattern: /final.*ndt|ndt.*final/i, requiredExtensions: [".pdf"] }],
+      generation: "attach-as-is",
+      automationConfidence: "high",
+      confidenceNote: "Post-repair NDT re-check results, attached as-is.",
+    },
+    {
       id: "finalWallThickness",
       title: "Final Wall Thickness Dimensions",
       // Same real form as the I&A Report's own Wall Thickness (confirmed against Job 18664:
@@ -140,6 +136,31 @@ export const finalReportTemplate: ReportTemplate = {
       automationConfidence: "high",
       confidenceNote:
         "UT wall-thickness re-check after repair; pass/fail computed against the printed minimum-limit row, same parser as the I&A Report's own Wall Thickness section. When a completed, print-ready PDF also exists on disk, the report embeds that PDF verbatim instead of a re-rendered table.",
+    },
+    {
+      // Named "Z Notch Dimensions.pdf" / "Bucket Dimensions.pdf" per a tech rep -- attach-as-is,
+      // not a parsed table, since no sample file was available to reverse-engineer a column
+      // layout from. Grouped with the other dimensional re-checks; see finalNdt's own comment on
+      // page-position uncertainty.
+      id: "zNotchDimensions",
+      title: "Z Notch Dimensions",
+      sourceRules: [{ kind: "filenamePattern", pattern: /z[\s-]?notch.*dimension/i, requiredExtensions: [".pdf"] }],
+      generation: "attach-as-is",
+      automationConfidence: "high",
+      confidenceNote: "Z-notch dimensional re-check results, attached as-is.",
+    },
+    {
+      id: "bucketDimensions",
+      title: "Bucket Heights",
+      // excludePattern matters here: confirmed live against a real job (19660) that a genuine
+      // Z-Notch Dimensions file, named "...bucket Z notch dimensions...", otherwise also satisfies
+      // this section's own "bucket...dimension" pattern (the word "bucket" just happens to sit
+      // before "dimension" in that filename too) -- excluding "notch" keeps the two sections from
+      // both claiming the same file as their real exhibit.
+      sourceRules: [{ kind: "filenamePattern", pattern: /bucket.*dimension/i, excludePattern: /notch/i, requiredExtensions: [".pdf"] }],
+      generation: "attach-as-is",
+      automationConfidence: "high",
+      confidenceNote: "Overall bucket height re-check results, attached as-is.",
     },
     {
       id: "postCoatHeatTreatChart",

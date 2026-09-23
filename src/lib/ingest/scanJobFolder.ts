@@ -94,7 +94,6 @@ const OPTIONAL_SUBSHEET_PARSERS: Record<string, (path: string) => Promise<Parsed
   // sheet" / "DS-0404 SN Recording Sheet" / "DS-0554 Blade Bucket scrap" tabs as the incoming
   // workbook, just for the final/as-shipped set.
   finalScrapReport: parseScrapReport,
-  finalSnRecordingSheet: parseSNRecordingSheet,
 };
 
 const ROUTER_SECTIONS = new Set(["fpiVisual", "recommendedRepairs"]);
@@ -115,6 +114,9 @@ const ATTACH_AS_IS_NO_PARSE = new Set([
   "shotPeenAlSealStripCert",
   "damperPinCheck",
   "finalMomentWeigh",
+  "finalNdt",
+  "zNotchDimensions",
+  "bucketDimensions",
 ]);
 
 // File types identifyByContent can actually be handed (a PDF as Claude's native document block,
@@ -195,7 +197,6 @@ const OPTIONAL_SUBSHEET_PDF_PATTERNS: Record<string, RegExp> = {
   // Final Report's own scrap export -- confirmed against Job 18664: "SCRAP SN List 5-30-26.pdf",
   // a plainer name than the incoming-stage equivalent's, so the pattern is looser to match.
   finalScrapReport: /scrap.*(sn|serial|number)/i,
-  finalSnRecordingSheet: /other.*number|serial.*other|sn.*recording/i,
 };
 
 /** Best-effort vision-based fallback for a section's real exhibit when filename matching didn't
