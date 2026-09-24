@@ -1091,6 +1091,10 @@ function CoverEditor({
     return [...placed, ...rest];
   });
   const [busy, setBusy] = useState(false);
+  // Which row is being dragged / currently dragged over, purely for visual feedback -- see the
+  // sidebar's own draggingSectionId/dragOverSectionId for the same pattern.
+  const [draggingKey, setDraggingKey] = useState<string | null>(null);
+  const [dragOverKey, setDragOverKey] = useState<string | null>(null);
 
   const save = async () => {
     setBusy(true);
@@ -1126,13 +1130,18 @@ function CoverEditor({
     setRowOrder((prev) => prev.filter((k) => k !== id));
   };
 
-  const moveRow = (key: string, direction: "up" | "down") => {
+  // Drags `draggedKey` out of the order and back in immediately before `targetKey` -- same
+  // remove-then-reinsert-at-the-target's-post-removal-index approach as the sidebar's own
+  // reorderSections, so the arithmetic doesn't have to special-case which direction it moved.
+  const reorderRow = (draggedKey: string, targetKey: string) => {
+    if (draggedKey === targetKey) return;
     setRowOrder((prev) => {
-      const idx = prev.indexOf(key);
-      const swapWith = direction === "up" ? idx - 1 : idx + 1;
-      if (idx === -1 || swapWith < 0 || swapWith >= prev.length) return prev;
       const next = [...prev];
-      [next[idx], next[swapWith]] = [next[swapWith], next[idx]];
+      const from = next.indexOf(draggedKey);
+      if (from === -1) return prev;
+      const [moved] = next.splice(from, 1);
+      const to = next.indexOf(targetKey);
+      next.splice(to === -1 ? from : to, 0, moved);
       return next;
     });
   };
@@ -1145,29 +1154,55 @@ function CoverEditor({
       <div className="cover-table-wrap">
         <table className="preview-table cover-table" style={{ maxWidth: 680 }}>
           <tbody>
-            {rowOrder.map((key, i) => {
+            {rowOrder.map((key) => {
               const fixed = fixedByKey.get(key);
               const custom = customById.get(key);
-              const reorderButtons = (
-                <div className="field-reorder">
-                  <button type="button" className="section-reorder-btn" disabled={i === 0} onClick={() => moveRow(key, "up")} title="Move up">
-                    ▲
-                  </button>
-                  <button
-                    type="button"
-                    className="section-reorder-btn"
-                    disabled={i === rowOrder.length - 1}
-                    onClick={() => moveRow(key, "down")}
-                    title="Move down"
+              // Only this handle carries `draggable` -- the <tr> itself is the drop TARGET (drag
+              // events below), not the drag source, so grabbing text inside one of the row's own
+              // inputs to select it doesn't get hijacked as a row-drag (same handle/row split as
+              // the sidebar's own section-drag-handle).
+              const dragHandle = (
+                <td className="field-reorder-cell">
+                  <span
+                    className="field-drag-handle"
+                    draggable
+                    onDragStart={(e) => {
+                      e.dataTransfer.effectAllowed = "move";
+                      setDraggingKey(key);
+                    }}
+                    onDragEnd={() => {
+                      setDraggingKey(null);
+                      setDragOverKey(null);
+                    }}
+                    title="Drag to reorder"
+                    aria-hidden="true"
                   >
-                    ▼
-                  </button>
-                </div>
+                    ⠿
+                  </span>
+                </td>
               );
+              // key is passed directly on each <tr> below, not through this spread -- React warns
+              // (and won't reliably use it for reconciliation) when a spread object carries `key`.
+              const rowProps = {
+                className: `${draggingKey === key ? "dragging-row" : ""} ${
+                  dragOverKey === key && draggingKey && draggingKey !== key ? "drag-over-row" : ""
+                }`,
+                onDragEnter: (e: React.DragEvent) => {
+                  e.preventDefault();
+                  if (draggingKey && draggingKey !== key) setDragOverKey(key);
+                },
+                onDragOver: (e: React.DragEvent) => e.preventDefault(),
+                onDrop: (e: React.DragEvent) => {
+                  e.preventDefault();
+                  if (draggingKey) reorderRow(draggingKey, key);
+                  setDraggingKey(null);
+                  setDragOverKey(null);
+                },
+              };
               if (fixed) {
                 return (
-                  <tr key={key}>
-                    <td className="field-reorder-cell">{reorderButtons}</td>
+                  <tr key={key} {...rowProps}>
+                    {dragHandle}
                     <th style={{ width: 170, textAlign: "left" }}>{fixed.label}</th>
                     <td>
                       <input
@@ -1182,8 +1217,8 @@ function CoverEditor({
               }
               if (!custom) return null; // a stale key from a previous session (e.g. a since-removed custom field) -- skip rather than crash
               return (
-                <tr key={key}>
-                  <td className="field-reorder-cell">{reorderButtons}</td>
+                <tr key={key} {...rowProps}>
+                  {dragHandle}
                   <th style={{ width: 170, textAlign: "left" }}>
                     <input
                       type="text"
@@ -1316,6 +1351,11 @@ export default function Home() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [generating, setGenerating] = useState(false);
+  // Which sidebar row is being dragged / currently dragged over, purely for the drag-and-drop
+  // visual feedback below (dimming the dragged row, highlighting the drop target) -- the actual
+  // reorder itself only happens on drop, via reorderSections.
+  const [draggingSectionId, setDraggingSectionId] = useState<string | null>(null);
+  const [dragOverSectionId, setDragOverSectionId] = useState<string | null>(null);
 
   const runScan = async (root: string) => {
     setLoading(true);
@@ -1356,16 +1396,19 @@ export default function Home() {
   };
 
   // Reorders the sidebar only -- see JobState.sectionOrder's own comment for why this never
-  // touches the generated report's own page order. Optimistic: the swap applies to `scan.sections`
-  // immediately so the row visibly moves before the save round-trips, same pattern as
-  // patchSectionState above.
-  const moveSectionOrder = (sectionId: string, direction: "up" | "down") => {
-    if (!scan || !jobRoot) return;
+  // touches the generated report's own page order. Drags `draggedId` out of the list and back in
+  // immediately before `targetId`, recomputing the target's index AFTER the removal (its own
+  // index shifts by one whenever the dragged item started above it) rather than doing the
+  // arithmetic by hand. Optimistic: applies to `scan.sections` immediately so the row visibly
+  // moves before the save round-trips, same pattern as patchSectionState above.
+  const reorderSections = (draggedId: string, targetId: string) => {
+    if (!scan || !jobRoot || draggedId === targetId) return;
     const ids = scan.sections.map((s) => s.id);
-    const idx = ids.indexOf(sectionId);
-    const swapWith = direction === "up" ? idx - 1 : idx + 1;
-    if (idx === -1 || swapWith < 0 || swapWith >= ids.length) return;
-    [ids[idx], ids[swapWith]] = [ids[swapWith], ids[idx]];
+    const from = ids.indexOf(draggedId);
+    if (from === -1) return;
+    const [moved] = ids.splice(from, 1);
+    const to = ids.indexOf(targetId);
+    ids.splice(to === -1 ? from : to, 0, moved);
 
     setScan((prev) => {
       if (!prev) return prev;
@@ -1495,8 +1538,46 @@ export default function Home() {
       <div className="app-body">
         <nav className="sidebar">
           <div className="sidebar-scroll">
-            {scan.sections.map((s, i) => (
-              <div key={s.id} className={`section-item ${s.id === selectedSection.id ? "active" : ""}`}>
+            {scan.sections.map((s) => (
+              // Sidebar-only reorder -- groups related tabs together for review (e.g. every
+              // heat-treat chart back to back on a job that needs that); doesn't change the
+              // generated report's own page order at all (see JobState.sectionOrder). The drag
+              // handle span (not this whole row) is what actually carries `draggable` -- it's the
+              // drag SOURCE, while this row is the drop TARGET, standard HTML5 dnd split so
+              // grabbing the handle doesn't fight with clicking the select button right next to it.
+              <div
+                key={s.id}
+                className={`section-item ${s.id === selectedSection.id ? "active" : ""} ${
+                  draggingSectionId === s.id ? "dragging" : ""
+                } ${dragOverSectionId === s.id && draggingSectionId && draggingSectionId !== s.id ? "drag-over" : ""}`}
+                onDragEnter={(e) => {
+                  e.preventDefault();
+                  if (draggingSectionId && draggingSectionId !== s.id) setDragOverSectionId(s.id);
+                }}
+                onDragOver={(e) => e.preventDefault()}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  if (draggingSectionId) reorderSections(draggingSectionId, s.id);
+                  setDraggingSectionId(null);
+                  setDragOverSectionId(null);
+                }}
+              >
+                <span
+                  className="section-drag-handle"
+                  draggable
+                  onDragStart={(e) => {
+                    e.dataTransfer.effectAllowed = "move";
+                    setDraggingSectionId(s.id);
+                  }}
+                  onDragEnd={() => {
+                    setDraggingSectionId(null);
+                    setDragOverSectionId(null);
+                  }}
+                  title={`Drag to reorder "${s.title}"`}
+                  aria-hidden="true"
+                >
+                  ⠿
+                </span>
                 <button type="button" className="section-item-select" onClick={() => setSelectedId(s.id)}>
                   <div className="title-row">
                     <span>{s.title}</span>
@@ -1504,29 +1585,6 @@ export default function Home() {
                   </div>
                   <div className="confidence-tag">{s.automationConfidence} confidence</div>
                 </button>
-                {/* Sidebar-only reorder -- groups related tabs together for review (e.g. every
-                    heat-treat chart back to back on a job that needs that); doesn't change the
-                    generated report's own page order at all (see JobState.sectionOrder). */}
-                <div className="section-reorder">
-                  <button
-                    type="button"
-                    className="section-reorder-btn"
-                    disabled={i === 0}
-                    onClick={() => moveSectionOrder(s.id, "up")}
-                    title={`Move "${s.title}" up`}
-                  >
-                    ▲
-                  </button>
-                  <button
-                    type="button"
-                    className="section-reorder-btn"
-                    disabled={i === scan.sections.length - 1}
-                    onClick={() => moveSectionOrder(s.id, "down")}
-                    title={`Move "${s.title}" down`}
-                  >
-                    ▼
-                  </button>
-                </div>
               </div>
             ))}
             <div className="sidebar-logo-spacer" aria-hidden="true">
