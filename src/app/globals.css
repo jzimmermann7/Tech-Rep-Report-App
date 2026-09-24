@@ -235,9 +235,19 @@ footer.app-header::before {
   border-left-color: #0b3d91;
 }
 
+/* Sets the row's own text color, which .section-drag-handle picks up via currentColor (it
+   declares no color of its own) -- without this the handle stayed dark and hard to see against
+   the navy hover fill, even though the title and confidence tag below already turned white.
+   Skipped for the active tab since its background stays white on hover, where white text (and a
+   white handle) would disappear. */
+.section-item:hover:not(.active) {
+  color: #ffffff;
+}
+
 /* Title/subtitle are normally near-black/grey, which is hard to read once the navy
-   hover tint darkens the row -- flip them to white on hover. Skipped for the active
-   tab since its background stays white on hover, where white text would disappear. */
+   hover tint darkens the row -- flip them to white on hover. Both already have their own
+   explicit color (stronger than inheriting the row's color above), hence needing their own
+   rule here too. */
 .section-item:hover:not(.active) .title-row span:first-child,
 .section-item:hover:not(.active) .confidence-tag {
   color: #ffffff;
