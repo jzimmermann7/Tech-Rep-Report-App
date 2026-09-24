@@ -256,7 +256,12 @@ const REPORT_STYLES = (apgBlue: string, apgBarGray: string) => `
      .table-section above for allowing the section itself to flow across pages: a step list long
      enough to spill past one page should do that gracefully, not get force-fit or clipped. */
   section.repairs-section { page-break-inside: auto; }
-  .repairs-columns { column-count: 2; column-gap: 28px; }
+  /* column-fill: auto (the default, "balance", instead spreads steps across both columns to make
+     them come out close to equal height, which reads oddly for a numbered procedure -- step 14
+     could end up above step 8). auto fills the left column all the way down first, the way the
+     steps are actually meant to be read, and only starts the right column once the left one is
+     genuinely full. */
+  .repairs-columns { column-count: 2; column-gap: 28px; column-fill: auto; }
   .repairs-columns p { font-size: 13px; line-height: 1.35; margin: 0 0 5px; break-inside: avoid; }
 
   /* Letterhead used at the top of every page after the cover, matching APG's standard report
@@ -276,7 +281,14 @@ const REPORT_STYLES = (apgBlue: string, apgBarGray: string) => `
   .cover { text-align: center; padding-top: 60px; page-break-inside: auto; }
   .cover-logo { width: 320px; margin-bottom: 24px; }
   .cover h1 { font-size: 26px; margin: 0 0 40px; }
-  .cover-fields { display: inline-block; text-align: left; }
+  /* display: block (with width: fit-content + margin: auto standing in for what inline-block used
+     to give for free -- shrink-to-content, centered by the parent) instead of inline-block. An
+     inline-block is one atomic box for pagination purposes: when it can't fit entirely on the
+     current page, the whole thing -- not just the overflow -- moves to the next page, leaving
+     page 1 with just the logo and title and nothing else. A block-level box doesn't have that
+     restriction, so its .cover-row children (each already page-break-inside: avoid) can split
+     across the page boundary wherever they actually run out of room. */
+  .cover-fields { display: block; width: fit-content; margin: 0 auto; text-align: left; }
   .cover-row { display: flex; gap: 24px; padding: 10px 0; font-size: 17px; page-break-inside: avoid; }
   .cover-label { width: 170px; flex-shrink: 0; color: #6a6a6a; font-weight: 700; }
   .cover-value { font-weight: 700; color: #1a1a1a; }
