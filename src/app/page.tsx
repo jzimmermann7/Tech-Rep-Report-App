@@ -1317,8 +1317,6 @@ function SectionPanel({
           <span>{section.statusReason}</span>
         </p>
       )}
-      {section.confidenceNote && <p className="confidence-note">{section.confidenceNote}</p>}
-
       {/* Keyed on lastGeneratedAt too, not just section.id -- a Rescan while this section is
           already open re-runs autoDraftJob in the background and can fill in a draft that was
           previously empty (e.g. a source file that wasn't found before now is). Without this,

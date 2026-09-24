@@ -50,8 +50,6 @@ export const finalReportTemplate: ReportTemplate = {
       ],
       generation: "llm-narrative",
       automationConfidence: "high",
-      confidenceNote:
-        "The same repair-router (or Repair CDS, see repairCds.ts) data the I&A Report's own Recommended Repairs section reads -- what was actually done, not a separate re-derivation.",
     },
     {
       id: "finalSerialNumberList",
@@ -69,7 +67,6 @@ export const finalReportTemplate: ReportTemplate = {
       ],
       generation: "table-from-source",
       automationConfidence: "high",
-      confidenceNote: "Transcribed directly from Form DS-0554's as-shipped export; the three parallel column blocks are un-pivoted into one table.",
     },
     {
       id: "finalScrapReport",
@@ -86,8 +83,6 @@ export const finalReportTemplate: ReportTemplate = {
       ],
       generation: "table-from-source",
       automationConfidence: "high",
-      confidenceNote:
-        "Reads the final-stage workbook's own \"scrap\" tab -- which buckets ended up scrapped by the time of shipment, not just flagged during incoming review. Left out of the generated report entirely when nothing was recorded, same reasoning as the I&A Report's own Scrap Report.",
     },
     {
       id: "preWeldHeatTreatChart",
@@ -95,7 +90,6 @@ export const finalReportTemplate: ReportTemplate = {
       sourceRules: [{ kind: "filenamePattern", pattern: /pre.?weld/i, requiredExtensions: [".pdf"] }],
       generation: "attach-as-is",
       automationConfidence: "high",
-      confidenceNote: "Furnace temperature/time trend chart from the pre-weld heat treat run, attached as-is.",
     },
     {
       id: "postWeldHeatTreatChart",
@@ -103,7 +97,6 @@ export const finalReportTemplate: ReportTemplate = {
       sourceRules: [{ kind: "filenamePattern", pattern: /post.?weld/i, requiredExtensions: [".pdf"] }],
       generation: "attach-as-is",
       automationConfidence: "high",
-      confidenceNote: "Furnace temperature/time trend chart from the post-weld heat treat run, attached as-is.",
     },
     {
       id: "xRayInspection",
@@ -111,7 +104,6 @@ export const finalReportTemplate: ReportTemplate = {
       sourceRules: [{ kind: "filenamePattern", pattern: /x.?ray/i, requiredExtensions: [".pdf"] }],
       generation: "attach-as-is",
       automationConfidence: "high",
-      confidenceNote: "Per Jonathan, only some jobs get X-ray -- no part-type allowlist, just missing when there's no X-ray file for this job. Attached as-is.",
     },
     {
       // Named "Final NDT.pdf" per a tech rep, no real completed report to reverse-engineer an
@@ -123,7 +115,6 @@ export const finalReportTemplate: ReportTemplate = {
       sourceRules: [{ kind: "filenamePattern", pattern: /final.*ndt|ndt.*final/i, requiredExtensions: [".pdf"] }],
       generation: "attach-as-is",
       automationConfidence: "high",
-      confidenceNote: "Post-repair NDT re-check results, attached as-is.",
     },
     {
       id: "finalWallThickness",
@@ -134,8 +125,6 @@ export const finalReportTemplate: ReportTemplate = {
       sourceRules: [{ kind: "filenamePattern", pattern: /final.*ut|ut.*final/i, preferFolder: /ndt/i, requiredExtensions: [".xlsx"] }],
       generation: "table-from-source",
       automationConfidence: "high",
-      confidenceNote:
-        "UT wall-thickness re-check after repair; pass/fail computed against the printed minimum-limit row, same parser as the I&A Report's own Wall Thickness section. When a completed, print-ready PDF also exists on disk, the report embeds that PDF verbatim instead of a re-rendered table.",
     },
     {
       // Named "Z Notch Dimensions.pdf" / "Bucket Dimensions.pdf" per a tech rep -- attach-as-is,
@@ -147,7 +136,6 @@ export const finalReportTemplate: ReportTemplate = {
       sourceRules: [{ kind: "filenamePattern", pattern: /z[\s-]?notch.*dimension/i, requiredExtensions: [".pdf"] }],
       generation: "attach-as-is",
       automationConfidence: "high",
-      confidenceNote: "Z-notch dimensional re-check results, attached as-is.",
     },
     {
       id: "postCoatHeatTreatChart",
@@ -155,7 +143,6 @@ export const finalReportTemplate: ReportTemplate = {
       sourceRules: [{ kind: "filenamePattern", pattern: /post.?coat/i, requiredExtensions: [".pdf"] }],
       generation: "attach-as-is",
       automationConfidence: "high",
-      confidenceNote: "Furnace temperature/time trend chart from the post-coat diffusion heat treat run, attached as-is.",
     },
     {
       id: "finalAgeHeatTreatChart",
@@ -163,7 +150,6 @@ export const finalReportTemplate: ReportTemplate = {
       sourceRules: [{ kind: "filenamePattern", pattern: /\bage\b/i, requiredExtensions: [".pdf"] }],
       generation: "attach-as-is",
       automationConfidence: "high",
-      confidenceNote: "Furnace temperature/time trend chart from the final age heat treat run, attached as-is.",
     },
     {
       id: "coatingCertification",
@@ -171,7 +157,6 @@ export const finalReportTemplate: ReportTemplate = {
       sourceRules: [{ kind: "filenamePattern", pattern: /coating.*cert/i, requiredExtensions: [".pdf"] }],
       generation: "attach-as-is",
       automationConfidence: "high",
-      confidenceNote: "Per Jonathan, applies to almost every job. Signed certification of the coating process applied, attached as-is.",
     },
     {
       id: "finalHeightDimForm",
@@ -183,8 +168,6 @@ export const finalReportTemplate: ReportTemplate = {
       sourceRules: [{ kind: "filenamePattern", pattern: /heights?.*final|final.*heights?/i, requiredExtensions: [".xlsx"] }],
       generation: "table-from-source",
       automationConfidence: "high",
-      confidenceNote:
-        "Tip & angel-wing heights re-check after repair, same parser as the I&A Report's own Height Dim Form. When a completed, print-ready PDF also exists on disk, the report embeds that PDF verbatim instead of a re-rendered table.",
     },
     {
       id: "finalAirflowReport",
@@ -192,8 +175,6 @@ export const finalReportTemplate: ReportTemplate = {
       sourceRules: [{ kind: "filenamePattern", pattern: /total.*flow|airflow/i, requiredExtensions: [".xlsx"] }],
       generation: "table-from-source",
       automationConfidence: "high",
-      confidenceNote:
-        "Per Jonathan, only some jobs get airflow -- no part-type allowlist, just missing when there's no airflow file for this job (same convention as the I&A Report's own Airflow Report, which this reuses the parser from). When a completed, print-ready PDF also exists on disk, the report embeds that PDF verbatim instead of a re-rendered table.",
     },
     {
       id: "shotPeenAlSealStripCert",
@@ -201,7 +182,6 @@ export const finalReportTemplate: ReportTemplate = {
       sourceRules: [{ kind: "filenamePattern", pattern: /shot.?peen/i, requiredExtensions: [".pdf"] }],
       generation: "attach-as-is",
       automationConfidence: "high",
-      confidenceNote: "Per Jonathan, applies to almost every job. Attached as-is.",
     },
     {
       id: "damperPinCheck",
@@ -209,7 +189,6 @@ export const finalReportTemplate: ReportTemplate = {
       sourceRules: [{ kind: "filenamePattern", pattern: /damper.*pin/i, requiredExtensions: [".pdf"] }],
       generation: "attach-as-is",
       automationConfidence: "high",
-      confidenceNote: "Per Jonathan, a routine check. Attached as-is.",
     },
     {
       id: "finalPhotoSet",
@@ -221,8 +200,6 @@ export const finalReportTemplate: ReportTemplate = {
       generation: "llm-vision-select",
       automationConfidence: "medium",
       alwaysReview: true,
-      confidenceNote:
-        "Preselects Final-stage photos automatically, same screening as the I&A Report's own Photo Set (duplicates/blur screened out, indication/marking shots sorted first) but preferring the \"3C Final\" folder instead of \"3A Incoming\". Still flagged for human confirmation since it's an image-judgment call.",
     },
     {
       id: "finalMomentWeigh",
@@ -230,7 +207,6 @@ export const finalReportTemplate: ReportTemplate = {
       sourceRules: [{ kind: "filenamePattern", pattern: /moment.*weigh/i, requiredExtensions: [".pdf"] }],
       generation: "attach-as-is",
       automationConfidence: "high",
-      confidenceNote: "Per Jonathan, applies to almost every job. Raw balance-machine output, attached as-is.",
     },
   ],
 };

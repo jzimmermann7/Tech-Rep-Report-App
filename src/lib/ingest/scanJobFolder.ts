@@ -26,7 +26,6 @@ export interface SectionScanResult {
   generation: GenerationStrategy;
   automationConfidence: AutomationConfidence;
   alwaysReview?: boolean;
-  confidenceNote?: string;
   dependsOnSections?: string[];
   status: SectionStatus;
   statusReason: string;
@@ -246,7 +245,6 @@ async function scanFileBackedSection(section: SectionConfig, files: JobFile[], j
     generation: section.generation,
     automationConfidence: section.automationConfidence,
     alwaysReview: section.alwaysReview,
-    confidenceNote: section.confidenceNote,
     // Computed unconditionally (cheap -- just a filter over the already-loaded file list) so every
     // return path below carries it automatically, regardless of which branch a given section takes
     // -- the review screen shows these as removable chips next to "Insert files manually"
@@ -540,7 +538,6 @@ function scanDependentSection(section: SectionConfig, resolved: Map<string, Sect
     generation: section.generation,
     automationConfidence: section.automationConfidence,
     alwaysReview: section.alwaysReview,
-    confidenceNote: section.confidenceNote,
     dependsOnSections: section.dependsOnSections,
     matchedFiles: [] as JobFile[],
   };
