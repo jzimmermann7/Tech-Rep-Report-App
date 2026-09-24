@@ -43,12 +43,15 @@ try {
   }
   if (-not $sheet) { $sheet = $wb.Worksheets.Item(1) }
   $sheet.Select()
-  # Force a single-page fit regardless of whatever print setup the sheet was last saved with --
-  # without this, a form sized just slightly past its printable area exports with a near-blank
-  # second page holding just the sliver that spilled over.
+  # Force a single-page-WIDE fit regardless of whatever print setup the sheet was last saved with
+  # -- without this, a form sized just slightly past its printable width exports with a near-blank
+  # extra page holding just the sliver of columns that spilled over. Deliberately NOT also forcing
+  # FitToPagesTall to 1: that squeezes every row onto one page no matter how many there are, which
+  # is fine for a short form but crushes a long table (90+ rows) down to unreadably tiny text.
+  # Leaving height unconstrained lets a tall sheet flow across as many pages as it actually needs.
   $sheet.PageSetup.Zoom = $false
   $sheet.PageSetup.FitToPagesWide = 1
-  $sheet.PageSetup.FitToPagesTall = 1
+  $sheet.PageSetup.FitToPagesTall = $false
   $wb.ActiveSheet.ExportAsFixedFormat(0, $OutputPath)
 } finally {
   if ($wb) { $wb.Close($false) }

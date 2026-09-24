@@ -150,19 +150,6 @@ export const finalReportTemplate: ReportTemplate = {
       confidenceNote: "Z-notch dimensional re-check results, attached as-is.",
     },
     {
-      id: "bucketDimensions",
-      title: "Bucket Heights",
-      // excludePattern matters here: confirmed live against a real job (19660) that a genuine
-      // Z-Notch Dimensions file, named "...bucket Z notch dimensions...", otherwise also satisfies
-      // this section's own "bucket...dimension" pattern (the word "bucket" just happens to sit
-      // before "dimension" in that filename too) -- excluding "notch" keeps the two sections from
-      // both claiming the same file as their real exhibit.
-      sourceRules: [{ kind: "filenamePattern", pattern: /bucket.*dimension/i, excludePattern: /notch/i, requiredExtensions: [".pdf"] }],
-      generation: "attach-as-is",
-      automationConfidence: "high",
-      confidenceNote: "Overall bucket height re-check results, attached as-is.",
-    },
-    {
       id: "postCoatHeatTreatChart",
       title: "Post-HVOF Coat Diffusion Heat Treat Chart",
       sourceRules: [{ kind: "filenamePattern", pattern: /post.?coat/i, requiredExtensions: [".pdf"] }],

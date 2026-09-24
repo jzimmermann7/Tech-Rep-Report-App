@@ -64,7 +64,21 @@ export async function POST(request: NextRequest) {
       return { ...section, matchedFiles, status: effectiveStatus, statusReason: effectiveStatusReason, state: sectionState };
     });
 
-    return NextResponse.json({ ...scanResult, sections });
+    // Sidebar-only reorder (see JobState.sectionOrder's own comment) -- doesn't touch the
+    // generated report's page order, which still follows the template regardless. Sections the
+    // tech rep has placed render in that order; anything not yet placed (a fresh job, or a
+    // section the template added after sectionOrder was last saved) keeps its template position,
+    // appended after everything that IS placed.
+    const orderedSections = state.sectionOrder?.length
+      ? (() => {
+          const byId = new Map(sections.map((s) => [s.id, s]));
+          const placed = state.sectionOrder.map((id) => byId.get(id)).filter((s): s is (typeof sections)[number] => Boolean(s));
+          const placedIds = new Set(placed.map((s) => s.id));
+          return [...placed, ...sections.filter((s) => !placedIds.has(s.id))];
+        })()
+      : sections;
+
+    return NextResponse.json({ ...scanResult, sections: orderedSections, sectionOrder: state.sectionOrder });
   } catch (err) {
     return NextResponse.json({ error: err instanceof Error ? err.message : "Scan failed" }, { status: 500 });
   }
