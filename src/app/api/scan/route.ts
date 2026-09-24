@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { scanJobFolder } from "@/lib/ingest/scanJobFolder";
 import { resolveReportTemplate } from "@/lib/report-templates";
-import { loadJobState } from "@/lib/state/jobState";
+import { loadJobState, applySectionOrder } from "@/lib/state/jobState";
 import { autoDraftJob } from "@/lib/draft/autoDraft";
 
 export async function POST(request: NextRequest) {
@@ -64,19 +64,10 @@ export async function POST(request: NextRequest) {
       return { ...section, matchedFiles, status: effectiveStatus, statusReason: effectiveStatusReason, state: sectionState };
     });
 
-    // Sidebar-only reorder (see JobState.sectionOrder's own comment) -- doesn't touch the
-    // generated report's page order, which still follows the template regardless. Sections the
-    // tech rep has placed render in that order; anything not yet placed (a fresh job, or a
-    // section the template added after sectionOrder was last saved) keeps its template position,
-    // appended after everything that IS placed.
-    const orderedSections = state.sectionOrder?.length
-      ? (() => {
-          const byId = new Map(sections.map((s) => [s.id, s]));
-          const placed = state.sectionOrder.map((id) => byId.get(id)).filter((s): s is (typeof sections)[number] => Boolean(s));
-          const placedIds = new Set(placed.map((s) => s.id));
-          return [...placed, ...sections.filter((s) => !placedIds.has(s.id))];
-        })()
-      : sections;
+    // Reorders both the sidebar and, via renderReportHtml.ts's renderReportSegments (which applies
+    // this same sectionOrder to its own scan of the job folder), the generated report's own page
+    // order -- see JobState.sectionOrder's own comment.
+    const orderedSections = applySectionOrder(sections, state.sectionOrder);
 
     return NextResponse.json({ ...scanResult, sections: orderedSections, sectionOrder: state.sectionOrder });
   } catch (err) {

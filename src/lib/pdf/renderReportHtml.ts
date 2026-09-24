@@ -3,7 +3,7 @@ import path from "path";
 import sharp from "sharp";
 import type { JobScanResult, SectionScanResult } from "../ingest/scanJobFolder";
 import { COVER_FIELD_ORDER } from "../ingest/jobMetadata";
-import type { JobState, SectionState } from "../state/jobState";
+import { applySectionOrder, type JobState, type SectionState } from "../state/jobState";
 import { applyTableEdits, type ParsedTable } from "../ingest/parsers/types";
 
 // APG's real letterhead colors, sampled directly from a completed report (Job #20443): a short
@@ -219,6 +219,14 @@ async function renderPhotoSet(section: SectionScanResult, jobRoot: string, secti
  * content to locate anything. */
 export type ReportSegment = { kind: "html"; html: string } | { kind: "pdf"; path: string };
 
+export interface RenderedReport {
+  segments: ReportSegment[];
+  /** Relative paths of attach-as-is matches that couldn't be embedded (matched a non-PDF file --
+   * e.g. a crack map saved as a photo instead of a PDF). Surfaced to the tech rep via
+   * generate-pdf/route.ts's X-Skipped-Attachments header rather than silently dropped. */
+  skippedAttachments: string[];
+}
+
 const REPORT_STYLES = (apgBlue: string, apgBarGray: string) => `
   body { font-family: Arial, Helvetica, sans-serif; font-size: 11px; color: #1a1a1a; }
   p { line-height: 1.5; margin: 0 0 10px; }
@@ -280,7 +288,10 @@ const REPORT_STYLES = (apgBlue: string, apgBarGray: string) => `
      same "let it flow across pages" fix already applied to table-section/repairs-section above. */
   .cover { text-align: center; padding-top: 60px; page-break-inside: auto; }
   .cover-logo { width: 320px; margin-bottom: 24px; }
-  .cover h1 { font-size: 26px; margin: 0 0 40px; }
+  /* Bumped from 26px/17px per tech rep feedback ("a little bigger"). cover-label widened to match
+     cover-row's larger font so a long fixed label (e.g. "Cast Part Number:") doesn't crowd its
+     value. */
+  .cover h1 { font-size: 30px; margin: 0 0 40px; }
   /* display: block (with width: fit-content + margin: auto standing in for what inline-block used
      to give for free -- shrink-to-content, centered by the parent) instead of inline-block. An
      inline-block is one atomic box for pagination purposes: when it can't fit entirely on the
@@ -289,9 +300,13 @@ const REPORT_STYLES = (apgBlue: string, apgBarGray: string) => `
      restriction, so its .cover-row children (each already page-break-inside: avoid) can split
      across the page boundary wherever they actually run out of room. */
   .cover-fields { display: block; width: fit-content; margin: 0 auto; text-align: left; }
-  .cover-row { display: flex; gap: 24px; padding: 10px 0; font-size: 17px; page-break-inside: avoid; }
-  .cover-label { width: 170px; flex-shrink: 0; color: #6a6a6a; font-weight: 700; }
+  .cover-row { display: flex; gap: 24px; padding: 10px 0; font-size: 19px; page-break-inside: avoid; }
+  .cover-label { width: 190px; flex-shrink: 0; color: #6a6a6a; font-weight: 700; }
   .cover-value { font-weight: 700; color: #1a1a1a; }
+  /* The cover's second page (see renderReportSegments -- everything after "Tech Rep" always
+     starts a fresh page, per tech rep feedback) reuses .cover for identical centering/typography
+     but skips the top padding and doesn't repeat the logo/title. */
+  .cover-continued { padding-top: 60px; }
 
   table { border-collapse: collapse; width: 100%; margin-top: 8px; }
   th, td { border: 1px solid #ccc; padding: 3px 6px; font-size: 9px; }
@@ -340,8 +355,12 @@ ${bodyHtml}
 </html>`;
 }
 
-export async function renderReportSegments(scan: JobScanResult, state: JobState): Promise<ReportSegment[]> {
-  const sectionsById = new Map(scan.sections.map((s) => [s.id, s]));
+export async function renderReportSegments(scanIn: JobScanResult, state: JobState): Promise<RenderedReport> {
+  // Applies the tech rep's own sectionOrder here too (the same helper /api/scan/route.ts uses for
+  // the review sidebar) -- scanJobFolder itself only ever returns the template's own default
+  // order, so without this, a dragged section would move in the sidebar but not in the actual
+  // generated report.
+  const scan: JobScanResult = { ...scanIn, sections: applySectionOrder(scanIn.sections, state.sectionOrder) };
   const contentFor = (id: string) => state.sections[id]?.content;
   const logo = await logoDataUri();
 
@@ -382,93 +401,41 @@ export async function renderReportSegments(scan: JobScanResult, state: JobState)
   // in between two fixed ones. label.trim() is always non-empty for a fixed field (it comes from
   // COVER_FIELD_ORDER, never user-editable), so the same blank check works for both without
   // needing a fixed/custom branch here.
-  const coverRows = coverKeyOrder
-    .map((key) => fixedCoverFields.get(key) ?? customCoverFields.get(key))
-    .filter((f): f is { label: string; value: string } => Boolean(f))
+  const coverFieldsOrdered = coverKeyOrder
+    .map((key) => {
+      const f = fixedCoverFields.get(key) ?? customCoverFields.get(key);
+      return f ? { key, label: f.label, value: f.value } : undefined;
+    })
+    .filter((f): f is { key: string; label: string; value: string } => Boolean(f))
     // A field left blank (or, for a custom field, half-filled-in) on the review screen prints as
     // a label with nothing after it, which reads as a missing piece of the report -- drop it.
-    .filter(({ label, value }) => label.trim() !== "" && value.trim() !== "")
-    .map(({ label, value }) => coverRowHtml(label, value))
-    .join("");
+    .filter(({ label, value }) => label.trim() !== "" && value.trim() !== "");
+
+  // Per tech rep feedback, the cover always breaks into a fresh page immediately after "Tech
+  // Rep" -- not just when the field list happens to overflow -- so the split point stays
+  // consistent from job to job instead of drifting with however many custom fields got added.
+  // Anchored to the "Tech Rep" field's identity (its cover-metadata key) rather than a fixed
+  // index, so it still lands in the right place if a tech rep drags Tech Rep itself elsewhere in
+  // the cover's own field order. Falls back to a single page when Tech Rep is absent (filtered
+  // out blank, e.g.) rather than always forcing a mostly-empty second page.
+  const techRepIndex = coverFieldsOrdered.findIndex((f) => f.key === "techRep");
+  const coverPage1Fields = techRepIndex === -1 ? coverFieldsOrdered : coverFieldsOrdered.slice(0, techRepIndex + 1);
+  const coverPage2Fields = techRepIndex === -1 ? [] : coverFieldsOrdered.slice(techRepIndex + 1);
+  const coverRowsHtml = (fields: typeof coverFieldsOrdered) => fields.map(({ label, value }) => coverRowHtml(label, value)).join("");
 
   bodyParts.push(`
     <section class="cover">
       <img class="cover-logo" src="${logo}" alt="APG" />
       <h1>${escapeHtml(scan.reportType)}</h1>
-      <div class="cover-fields">${coverRows}</div>
+      <div class="cover-fields">${coverRowsHtml(coverPage1Fields)}</div>
     </section>`);
-
-  const narrativeSectionIds = ["iaSummary", "fpiVisual", "dimensionalSummary", "recommendedRepairs"];
-  for (const id of narrativeSectionIds) {
-    const section = sectionsById.get(id);
-    if (!section) continue;
-    const narrativeHtml = renderNarrative(contentFor(id));
-    // Recommended Repairs is just a numbered list of short step labels -- a full-width column
-    // wastes most of the page's width on short lines and pushes a routine ~15-25 step list onto
-    // a second or third page for no reason. Two CSS columns (see .repairs-columns) let text wrap
-    // within a narrower column instead, fitting far more steps per page while still reading
-    // naturally -- and still flows onto another page on its own if a job's list is genuinely too
-    // long, rather than forcing it to a fixed page count.
-    const standardDiagramHtml = id === "iaSummary" ? await renderStandardDiagram(scan, state) : "";
-    const body = id === "recommendedRepairs" ? `<div class="repairs-columns">${narrativeHtml}</div>` : `${narrativeHtml}${standardDiagramHtml}`;
-    const sectionClass = [
-      "report-page",
-      "narrative-section",
-      id === "recommendedRepairs" && "repairs-section",
-      (id === "iaSummary" || id === "fpiVisual") && "narrative-section-large",
-      id === "fpiVisual" && "fpi-visual-section",
-    ]
-      .filter(Boolean)
-      .join(" ");
-    bodyParts.push(`<section class="${sectionClass}">${pageHeader(section.title, logo)}${body}</section>`);
+  if (coverPage2Fields.length > 0) {
+    bodyParts.push(`
+      <section class="cover cover-continued report-page">
+        <div class="cover-fields">${coverRowsHtml(coverPage2Fields)}</div>
+      </section>`);
   }
 
-  // The Final Report interleaves its own dimensional re-checks with a handful of true
-  // attach-as-is certifications/checklists throughout the document (confirmed against a real
-  // completed report, Job 18664) rather than grouping every attach-as-is exhibit at the very end
-  // the way the I&A Report's chemTest/crackMap/metallurgicalReport do (see generateReport.ts's
-  // ATTACH_AS_IS_ORDER) -- so these are embedded inline, at their real position in this same
-  // ordered loop, instead of appended separately at the end.
-  const INLINE_ATTACH_SECTIONS = new Set([
-    "preWeldHeatTreatChart",
-    "postWeldHeatTreatChart",
-    "xRayInspection",
-    "finalNdt",
-    "zNotchDimensions",
-    "postCoatHeatTreatChart",
-    "finalAgeHeatTreatChart",
-    "coatingCertification",
-    "shotPeenAlSealStripCert",
-    "damperPinCheck",
-  ]);
-
-  const tableSectionIds = [
-    "serialNumberList",
-    "scrapReport",
-    "snRecordingSheet",
-    "heightDimForm",
-    "dovetailDimension",
-    "zDropDimension",
-    "wallThickness",
-    "airflowReport",
-    // Final Report's own re-checks and inline exhibits, in the same order the real report shows
-    // them (see INLINE_ATTACH_SECTIONS' own comment).
-    "finalSerialNumberList",
-    "finalScrapReport",
-    "preWeldHeatTreatChart",
-    "postWeldHeatTreatChart",
-    "xRayInspection",
-    "finalNdt",
-    "finalWallThickness",
-    "zNotchDimensions",
-    "postCoatHeatTreatChart",
-    "finalAgeHeatTreatChart",
-    "coatingCertification",
-    "finalHeightDimForm",
-    "finalAirflowReport",
-    "shotPeenAlSealStripCert",
-    "damperPinCheck",
-  ];
   // Scrap Report / SN Recording Sheet / Airflow Report / Z-Drop Dimensions are all genuinely
   // optional -- most jobs won't have scrap or prior-repair history to report, most jobs don't
   // need an airflow report, and Z-Drop Dimensions doesn't apply to 1st-stage buckets at all (see
@@ -477,67 +444,98 @@ export async function renderReportSegments(scan: JobScanResult, state: JobState)
   // out of the generated report entirely rather than printing an empty or "missing" page nobody
   // asked for -- exactly the "conditional logic, not on every report" these were built for.
   const OMIT_WHEN_EMPTY = new Set(["scrapReport", "snRecordingSheet", "airflowReport", "zDropDimension", "finalScrapReport", "finalAirflowReport"]);
-  for (const id of tableSectionIds) {
-    const section = sectionsById.get(id);
-    if (!section) continue;
-    if (INLINE_ATTACH_SECTIONS.has(id)) {
-      // Same "tech rep's own pick overrides the auto-match" convention as the end-of-document
-      // attach-as-is exhibits (see generateReport.ts's ATTACH_AS_IS_ORDER loop) -- just embedded
-      // here instead of appended later. Silently skipped when nothing was found at all, same as
-      // any other optional exhibit; no placeholder page for a chart/cert nobody asked to see.
+  const skippedAttachments: string[] = [];
+
+  // Every remaining section, in scan.sections' own order -- reordered per sectionOrder just above
+  // -- dispatched by generation strategy rather than the old fixed
+  // narrativeSectionIds/tableSectionIds/INLINE_ATTACH_SECTIONS arrays
+  // plus generateReport.ts's separate end-of-document ATTACH_AS_IS_ORDER loop. Dragging a section
+  // in the sidebar now moves it in the generated report too -- previously deliberately NOT the
+  // case (see jobState.ts's sectionOrder comment) until a tech rep explicitly asked for it: "they
+  // arent moving the tabs around just because, they are purposefully changing the order." Cover
+  // is the one exception, always rendered first above regardless of its position in sectionOrder
+  // -- every real report opens with its title page.
+  for (const section of scan.sections) {
+    const id = section.id;
+    if (id === "cover") continue;
+
+    if (section.generation === "llm-narrative") {
+      const narrativeHtml = renderNarrative(contentFor(id));
+      // Recommended Repairs is just a numbered list of short step labels -- a full-width column
+      // wastes most of the page's width on short lines and pushes a routine ~15-25 step list onto
+      // a second or third page for no reason. Two CSS columns (see .repairs-columns) let text wrap
+      // within a narrower column instead, fitting far more steps per page while still reading
+      // naturally -- and still flows onto another page on its own if a job's list is genuinely too
+      // long, rather than forcing it to a fixed page count.
+      const standardDiagramHtml = id === "iaSummary" ? await renderStandardDiagram(scan, state) : "";
+      const body = id === "recommendedRepairs" ? `<div class="repairs-columns">${narrativeHtml}</div>` : `${narrativeHtml}${standardDiagramHtml}`;
+      const sectionClass = [
+        "report-page",
+        "narrative-section",
+        id === "recommendedRepairs" && "repairs-section",
+        (id === "iaSummary" || id === "fpiVisual") && "narrative-section-large",
+        id === "fpiVisual" && "fpi-visual-section",
+      ]
+        .filter(Boolean)
+        .join(" ");
+      bodyParts.push(`<section class="${sectionClass}">${pageHeader(section.title, logo)}${body}</section>`);
+      continue;
+    }
+
+    if (section.generation === "table-from-source") {
+      if (section.printPdfFile && !state.sections[id]?.excludePrintPdf) {
+        // A completed, print-ready PDF of this exact form exists (see PRINT_PDF_SECTIONS) --
+        // don't render our own table here at all. Flush whatever HTML has accumulated so far as
+        // its own segment, drop in the real PDF as its own segment, and keep building HTML after
+        // it -- the real form's pages land at exactly this point in the final document. Skipped
+        // when the tech rep has explicitly excluded it (see SectionState.excludePrintPdf), falling
+        // through to the re-rendered table below instead.
+        flush();
+        segments.push({ kind: "pdf", path: section.printPdfFile.absolutePath });
+        continue;
+      }
+      const editedTable = section.parsedTable ? applyTableEdits(section.parsedTable, state.sections[id]?.tableEdits) : undefined;
+      if (OMIT_WHEN_EMPTY.has(id) && (!editedTable || editedTable.rows.length === 0)) continue;
+      const body = editedTable
+        ? renderTable(editedTable, { columnBlocks: id === "serialNumberList" ? 3 : 1, notesText: state.sections[id]?.tableNotes })
+        : `<p class="missing">No data available.</p>`;
+      bodyParts.push(`<section class="report-page table-section">${pageHeader(section.title, logo)}${body}</section>`);
+      continue;
+    }
+
+    if (section.generation === "llm-vision-select") {
+      const photoHtml = await renderPhotoSet(section, scan.jobRoot, state.sections[id]);
+      bodyParts.push(`<section class="report-page">${pageHeader(section.title, logo)}${photoHtml}</section>`);
+      continue;
+    }
+
+    if (section.generation === "attach-as-is") {
+      // Tech rep's own pick overrides the auto-match (see SectionState.selectedAttachmentPath).
+      // Every attach-as-is exhibit -- Final Report's charts/certs and I&A Report's Metallurgical
+      // Report/Chem Test/Crack Map alike -- now embeds inline at its position in scan.sections'
+      // order, rather than I&A's three being forced to the very end via a separate post-merge
+      // step (generateReport.ts's old ATTACH_AS_IS_ORDER): that grouping was itself just an
+      // artifact of matching a fixed template order, not a real constraint, so it's no longer
+      // correct now that order is meant to follow the tech rep's own drag-and-drop.
       const selectedPath = state.sections[id]?.selectedAttachmentPath;
       const file = (selectedPath && section.matchedFiles.find((f) => f.relativePath === selectedPath)) || section.matchedFiles[0];
       if (file && file.ext === ".pdf") {
         flush();
         segments.push({ kind: "pdf", path: file.absolutePath });
+      } else if (file) {
+        // Matched something, but it's not a PDF we can embed (e.g. a crack map saved as a photo
+        // instead of scanned to PDF) -- surface it as skipped rather than silently dropping it.
+        skippedAttachments.push(file.relativePath);
+      } else if (id === "crackMap" && section.status === "missing") {
+        // Crack Map is the one attach-as-is exhibit that still prints an honest "missing" page
+        // when nothing was found at all, rather than being silently omitted -- a real gap here
+        // (unlike, say, a job with no X-Ray Inspection at all) is worth flagging explicitly.
+        bodyParts.push(`<section class="report-page">${pageHeader(section.title, logo)}<p class="missing">No crack map was found for this job.</p></section>`);
       }
       continue;
     }
-    if (section.printPdfFile && !state.sections[id]?.excludePrintPdf) {
-      // A completed, print-ready PDF of this exact form exists (see PRINT_PDF_SECTIONS) --
-      // don't render our own table here at all. Flush whatever HTML has accumulated so far as
-      // its own segment, drop in the real PDF as its own segment, and keep building HTML after
-      // it -- the real form's pages land at exactly this point in the final document. Skipped
-      // when the tech rep has explicitly excluded it (see SectionState.excludePrintPdf), falling
-      // through to the re-rendered table below instead.
-      flush();
-      segments.push({ kind: "pdf", path: section.printPdfFile.absolutePath });
-      continue;
-    }
-    const editedTable = section.parsedTable ? applyTableEdits(section.parsedTable, state.sections[id]?.tableEdits) : undefined;
-    if (OMIT_WHEN_EMPTY.has(id) && (!editedTable || editedTable.rows.length === 0)) continue;
-    const body = editedTable
-      ? renderTable(editedTable, { columnBlocks: id === "serialNumberList" ? 3 : 1, notesText: state.sections[id]?.tableNotes })
-      : `<p class="missing">No data available.</p>`;
-    bodyParts.push(`<section class="report-page table-section">${pageHeader(section.title, logo)}${body}</section>`);
-  }
-
-  // Whichever photo-set section this report template actually has (see autoDraftJob's own
-  // comment on the same pairing) -- a template only ever has one of the two.
-  for (const id of ["photoSet", "finalPhotoSet"]) {
-    const photoSection = sectionsById.get(id);
-    if (!photoSection) continue;
-    const photoHtml = await renderPhotoSet(photoSection, scan.jobRoot, state.sections[id]);
-    bodyParts.push(`<section class="report-page">${pageHeader(photoSection.title, logo)}${photoHtml}</section>`);
-  }
-
-  // Final Moment Weigh comes after Final Photos in the real report (Job 18664), not grouped with
-  // the other inline attach-as-is exhibits above -- same inline-embed mechanism regardless.
-  const momentWeighSection = sectionsById.get("finalMomentWeigh");
-  if (momentWeighSection) {
-    const selectedPath = state.sections["finalMomentWeigh"]?.selectedAttachmentPath;
-    const file = (selectedPath && momentWeighSection.matchedFiles.find((f) => f.relativePath === selectedPath)) || momentWeighSection.matchedFiles[0];
-    if (file && file.ext === ".pdf") {
-      flush();
-      segments.push({ kind: "pdf", path: file.absolutePath });
-    }
-  }
-
-  const crackMapSection = sectionsById.get("crackMap");
-  if (crackMapSection && crackMapSection.status === "missing") {
-    bodyParts.push(`<section class="report-page">${pageHeader(crackMapSection.title, logo)}<p class="missing">No crack map was found for this job.</p></section>`);
   }
 
   flush();
-  return segments;
+  return { segments, skippedAttachments };
 }

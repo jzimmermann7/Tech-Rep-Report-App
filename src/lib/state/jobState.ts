@@ -76,14 +76,31 @@ export interface SectionState {
 export interface JobState {
   jobRoot: string;
   sections: Record<string, SectionState>;
-  /** The tech rep's own sidebar order for this job's report sections, by id -- lets related
-   * sections (e.g. every heat-treat chart) be grouped together for review even when the report
-   * template's own fixed order interleaves them with other sections. Purely a review-screen
-   * convenience: it reorders the sidebar list and nothing else -- the generated report's own page
-   * order still follows the template, unaffected by this. Sections not listed here (a job that's
-   * never been reordered, or a section added to the template after this was last saved) render
-   * after everything that is, in the template's own default order -- see /api/scan's orderSections. */
+  /** The tech rep's own order for this job's report sections, by id -- lets related sections (e.g.
+   * every heat-treat chart) be grouped together even when the report template's own default order
+   * interleaves them with other sections. Drives BOTH the review sidebar's order and the generated
+   * report's own page order (see /api/scan/route.ts's reordering of scan.sections, which
+   * renderReportHtml.ts's renderReportSegments then renders straight through in that same order) --
+   * a tech rep dragging a section in the sidebar is deliberately choosing where it lands in the
+   * final report, not just tidying the review screen. Sections not listed here (a job that's never
+   * been reordered, or a section added to the template after this was last saved) render after
+   * everything that is, in the template's own default order -- see /api/scan's orderSections. */
   sectionOrder?: string[];
+}
+
+/** Reorders `sections` per the tech rep's own sectionOrder (see JobState.sectionOrder's own
+ * comment) -- shared by /api/scan/route.ts (the review sidebar) and renderReportHtml.ts's
+ * renderReportSegments (the generated report), so both actually walk the same order rather than
+ * each reimplementing this placed-then-unplaced merge slightly differently. Sections in `order`
+ * render first, in that order; anything not mentioned (a fresh job, or a section the template
+ * added after `order` was last saved) keeps its own relative order, appended after everything
+ * that is placed. */
+export function applySectionOrder<T extends { id: string }>(sections: T[], order: string[] | undefined): T[] {
+  if (!order || order.length === 0) return sections;
+  const byId = new Map(sections.map((s) => [s.id, s]));
+  const placed = order.map((id) => byId.get(id)).filter((s): s is T => Boolean(s));
+  const placedIds = new Set(placed.map((s) => s.id));
+  return [...placed, ...sections.filter((s) => !placedIds.has(s.id))];
 }
 
 function stateDir(): string {

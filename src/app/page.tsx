@@ -1395,10 +1395,10 @@ export default function Home() {
     );
   };
 
-  // Reorders the sidebar only -- see JobState.sectionOrder's own comment for why this never
-  // touches the generated report's own page order. Drags `draggedId` out of the list and back in
-  // immediately before `targetId`, recomputing the target's index AFTER the removal (its own
-  // index shifts by one whenever the dragged item started above it) rather than doing the
+  // Reorders the sidebar, and -- since the generated report follows this same order too (see
+  // JobState.sectionOrder's own comment) -- the report itself. Drags `draggedId` out of the list
+  // and back in immediately before `targetId`, recomputing the target's index AFTER the removal
+  // (its own index shifts by one whenever the dragged item started above it) rather than doing the
   // arithmetic by hand. Optimistic: applies to `scan.sections` immediately so the row visibly
   // moves before the save round-trips, same pattern as patchSectionState above.
   const reorderSections = (draggedId: string, targetId: string) => {
@@ -1539,10 +1539,10 @@ export default function Home() {
         <nav className="sidebar">
           <div className="sidebar-scroll">
             {scan.sections.map((s) => (
-              // Sidebar-only reorder -- groups related tabs together for review (e.g. every
-              // heat-treat chart back to back on a job that needs that); doesn't change the
-              // generated report's own page order at all (see JobState.sectionOrder). The drag
-              // handle span (not this whole row) is what actually carries `draggable` -- it's the
+              // Reorder -- groups related tabs together for review (e.g. every heat-treat chart
+              // back to back on a job that needs that), and moves them the same way in the
+              // generated report's own page order (see JobState.sectionOrder). The drag handle
+              // span (not this whole row) is what actually carries `draggable` -- it's the
               // drag SOURCE, while this row is the drop TARGET, standard HTML5 dnd split so
               // grabbing the handle doesn't fight with clicking the select button right next to it.
               <div
