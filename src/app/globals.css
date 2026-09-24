@@ -164,11 +164,15 @@ footer.app-header::before {
   display: block;
 }
 
+/* No longer itself a <button> -- wraps the "select" button (click to open this section) and the
+   small reorder buttons (see .section-reorder) side by side, since a button can't nest inside
+   another button. Everything this rule (and .section-item:hover/.active below) used to draw on
+   the button itself now draws on this wrapper instead; .section-item-select just carries the text. */
 .section-item {
-  display: block;
+  display: flex;
+  align-items: stretch;
   width: 100%;
-  text-align: left;
-  padding: 13px 16px 13px 13px;
+  padding: 0;
   border: none;
   /* A soft blue-grey hairline instead of the full-strength brand navy -- a heavy dark line
      between every row read more like spreadsheet gridlines than a polished list. */
@@ -177,11 +181,22 @@ footer.app-header::before {
   border-left: 3px solid transparent;
   border-radius: 0;
   background: none;
-  box-shadow: none;
   color: #1a1a1a;
-  cursor: pointer;
-  font-size: 13px;
   transition: background-color 0.15s ease, border-left-color 0.15s ease;
+}
+
+.section-item-select {
+  flex: 1;
+  min-width: 0;
+  display: block;
+  text-align: left;
+  padding: 13px 4px 13px 13px;
+  border: none;
+  background: none;
+  box-shadow: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
 }
 
 .section-item:hover {
@@ -204,6 +219,55 @@ footer.app-header::before {
      physically connected to the white main panel next to it, like a real notebook-tab,
      instead of interrupted by the divider line. */
   border-right: none;
+}
+
+/* Dim at rest (still visible enough to notice the feature exists) and full contrast on hover or
+   on the active row, same "quiet until it matters" treatment as .manual-attachment-chip-remove. */
+.section-reorder {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 3px;
+  padding: 6px 10px 6px 0;
+  flex: none;
+  opacity: 0.35;
+  transition: opacity 0.15s ease;
+}
+
+.section-item:hover .section-reorder,
+.section-item.active .section-reorder {
+  opacity: 1;
+}
+
+.section-reorder-btn {
+  width: 20px;
+  height: 16px;
+  line-height: 13px;
+  padding: 0;
+  border: 1px solid #0b3d91;
+  border-radius: 4px;
+  background: #ffffff;
+  color: #0b3d91;
+  font-size: 8px;
+  font-weight: 700;
+  box-shadow: none;
+}
+
+/* The generic button:hover rule (see its own comment further up this file) still applies here
+   (this button doesn't carry the .section-item class it excludes) and fills the background navy
+   on hover without touching text color -- without this, the label would go navy-on-navy. */
+.section-reorder-btn:hover:not(:disabled) {
+  color: #ffffff;
+  box-shadow: none;
+}
+
+.section-reorder-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.section-item-select:hover {
+  box-shadow: none;
 }
 
 .section-item .title-row {
@@ -614,6 +678,20 @@ button.generate-report:active:not(:disabled) {
 .cover-table th {
   position: static;
   font-weight: 700;
+}
+
+/* Its own narrow leading column rather than living inside the label cell -- the label cell is
+   already tight for some of the longer standard field names (e.g. "Mach Part Number"), and
+   cramming reorder buttons in there too would force it to wrap. */
+.cover-table .field-reorder-cell {
+  width: 46px;
+  padding: 10px 2px 10px 10px;
+  vertical-align: middle;
+}
+
+.field-reorder {
+  display: flex;
+  gap: 3px;
 }
 
 .cover-table input[type="text"] {

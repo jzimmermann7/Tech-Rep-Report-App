@@ -268,12 +268,16 @@ const REPORT_STYLES = (apgBlue: string, apgBarGray: string) => `
   .letterhead-bar { height: 4px; margin: 6px 0 20px; background: linear-gradient(to right, ${apgBlue} 0 12%, ${apgBarGray} 12% 100%); }
 
   /* Cover page -- field rows sized to match APG's own original reports (see the narrative-section
-     comment above for how these sizes were confirmed). */
-  .cover { text-align: center; padding-top: 60px; }
+     comment above for how these sizes were confirmed). page-break-inside: auto overrides the
+     generic "section { page-break-inside: avoid }" above -- a job with enough added custom fields
+     (see SectionState.customFields) can genuinely run past one page, and without this override
+     the extra rows were getting clipped off the bottom instead of flowing onto a second page, the
+     same "let it flow across pages" fix already applied to table-section/repairs-section above. */
+  .cover { text-align: center; padding-top: 60px; page-break-inside: auto; }
   .cover-logo { width: 320px; margin-bottom: 24px; }
   .cover h1 { font-size: 26px; margin: 0 0 40px; }
   .cover-fields { display: inline-block; text-align: left; }
-  .cover-row { display: flex; gap: 24px; padding: 10px 0; font-size: 17px; }
+  .cover-row { display: flex; gap: 24px; padding: 10px 0; font-size: 17px; page-break-inside: avoid; }
   .cover-label { width: 170px; flex-shrink: 0; color: #6a6a6a; font-weight: 700; }
   .cover-value { font-weight: 700; color: #1a1a1a; }
 
@@ -340,23 +344,37 @@ export async function renderReportSegments(scan: JobScanResult, state: JobState)
 
   // Cover page: APG's usual incoming-report look — a large centered logo, the report title, and
   // a left-aligned label/value list with no table borders (not a bordered grid).
-  const coverOverrides = state.sections["cover"]?.fields ?? {};
+  const coverState = state.sections["cover"];
+  const coverOverrides = coverState?.fields ?? {};
   const coverRowHtml = (label: string, value: string) =>
     `<div class="cover-row"><span class="cover-label">${escapeHtml(label)}:</span><span class="cover-value">${escapeHtml(value)}</span></div>`;
-  const coverRows = COVER_FIELD_ORDER.map(({ key, label }) => {
-    const raw = (coverOverrides[key as string] ?? (scan.metadata[key] as string) ?? "").toString();
-    const value = key === "date" ? raw.split("T")[0] : raw;
-    return { label, value };
-  })
-    // A field left blank on the review screen prints as a label with nothing after it, which
-    // reads as a missing piece of the report -- drop any row like that instead, for every field.
-    .filter(({ value }) => value.trim() !== "")
-    .map(({ label, value }) => coverRowHtml(label, value))
-    .join("");
-  // Extra rows a tech rep added for job-specific info the standard fields above don't cover (see
-  // SectionState.customFields) -- same blank-row filtering, since a field added and then left
-  // half-empty shouldn't print any more than a blank standard one does.
-  const customCoverRows = (state.sections["cover"]?.customFields ?? [])
+  const fixedCoverFields = new Map(
+    COVER_FIELD_ORDER.map(({ key, label }) => {
+      const raw = (coverOverrides[key as string] ?? (scan.metadata[key] as string) ?? "").toString();
+      const value = key === "date" ? raw.split("T")[0] : raw;
+      return [key as string, { label, value }];
+    })
+  );
+  const customCoverFields = new Map((coverState?.customFields ?? []).map((f) => [f.id, { label: f.label, value: f.value }]));
+  // Combined key order across both the fixed and custom fields, matching CoverEditor's own
+  // fieldOrder (see SectionState.fieldOrder's own comment) -- falls back to "every fixed field,
+  // then every custom field, each in their own default order" when a job's cover has never been
+  // reordered, or for any key fieldOrder doesn't mention (a custom field added after it was last
+  // saved, e.g.).
+  const allCoverKeys = [...fixedCoverFields.keys(), ...customCoverFields.keys()];
+  const placedKeys = (coverState?.fieldOrder ?? []).filter((k) => allCoverKeys.includes(k));
+  const coverKeyOrder = [...placedKeys, ...allCoverKeys.filter((k) => !placedKeys.includes(k))];
+  // One combined pass, fixed and custom fields interleaved in coverKeyOrder's own order -- doing
+  // fixed and custom as two separate filtered lists and concatenating them would always print
+  // every fixed field before every custom one, ignoring a custom field the tech rep moved up
+  // in between two fixed ones. label.trim() is always non-empty for a fixed field (it comes from
+  // COVER_FIELD_ORDER, never user-editable), so the same blank check works for both without
+  // needing a fixed/custom branch here.
+  const coverRows = coverKeyOrder
+    .map((key) => fixedCoverFields.get(key) ?? customCoverFields.get(key))
+    .filter((f): f is { label: string; value: string } => Boolean(f))
+    // A field left blank (or, for a custom field, half-filled-in) on the review screen prints as
+    // a label with nothing after it, which reads as a missing piece of the report -- drop it.
     .filter(({ label, value }) => label.trim() !== "" && value.trim() !== "")
     .map(({ label, value }) => coverRowHtml(label, value))
     .join("");
@@ -365,7 +383,7 @@ export async function renderReportSegments(scan: JobScanResult, state: JobState)
     <section class="cover">
       <img class="cover-logo" src="${logo}" alt="APG" />
       <h1>${escapeHtml(scan.reportType)}</h1>
-      <div class="cover-fields">${coverRows}${customCoverRows}</div>
+      <div class="cover-fields">${coverRows}</div>
     </section>`);
 
   const narrativeSectionIds = ["iaSummary", "fpiVisual", "dimensionalSummary", "recommendedRepairs"];
@@ -405,7 +423,6 @@ export async function renderReportSegments(scan: JobScanResult, state: JobState)
     "xRayInspection",
     "finalNdt",
     "zNotchDimensions",
-    "bucketDimensions",
     "postCoatHeatTreatChart",
     "finalAgeHeatTreatChart",
     "coatingCertification",
@@ -432,7 +449,6 @@ export async function renderReportSegments(scan: JobScanResult, state: JobState)
     "finalNdt",
     "finalWallThickness",
     "zNotchDimensions",
-    "bucketDimensions",
     "postCoatHeatTreatChart",
     "finalAgeHeatTreatChart",
     "coatingCertification",

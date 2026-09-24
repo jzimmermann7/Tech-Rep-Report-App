@@ -7,7 +7,7 @@ import { COVER_FIELD_ORDER } from "@/lib/ingest/jobMetadata";
 import type { SectionState } from "@/lib/state/jobState";
 
 type SectionWithState = SectionScanResult & { state: SectionState };
-type ScanResponse = Omit<JobScanResult, "sections"> & { sections: SectionWithState[] };
+type ScanResponse = Omit<JobScanResult, "sections"> & { sections: SectionWithState[]; sectionOrder?: string[] };
 
 // Kept as a small literal here rather than importing from "@/lib/report-templates" -- this is a
 // client component, and the two ids are all it actually needs; resolving which real
@@ -270,6 +270,14 @@ function FolderPicker({ onJobFolderChosen, onBack }: { onJobFolderChosen: (path:
   );
 }
 
+// Stable per-row id for a custom cover field (see SectionState.customFields), so a saved
+// fieldOrder can keep referencing a row across edits to its own label/value. crypto.randomUUID
+// isn't available on very old browsers, hence the fallback -- collision odds are irrelevant here
+// (a handful of rows on one job's cover page, not a distributed system).
+function genId(): string {
+  return typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : Math.random().toString(36).slice(2);
+}
+
 function chunkRows<T>(rows: T[], numChunks: number): T[][] {
   const perChunk = Math.ceil(rows.length / numChunks);
   const chunks: T[][] = [];
@@ -309,7 +317,6 @@ const MANUAL_ATTACHMENT_SECTIONS = new Set([
   "xRayInspection",
   "finalNdt",
   "zNotchDimensions",
-  "bucketDimensions",
   "postCoatHeatTreatChart",
   "finalAgeHeatTreatChart",
   "coatingCertification",
@@ -1069,82 +1076,137 @@ function CoverEditor({
   }
   const [values, setValues] = useState(initial);
   // Extra label/value rows beyond the fixed COVER_FIELD_ORDER set, for whatever a specific job
-  // needs called out that none of the standard fields cover (see SectionState.customFields).
-  const [customFields, setCustomFields] = useState(section.state.customFields ?? []);
+  // needs called out that none of the standard fields cover (see SectionState.customFields). A
+  // row saved before ids existed gets one generated here, purely for this session's reordering --
+  // harmless if it changes between sessions since nothing else keys off it.
+  const [customFields, setCustomFields] = useState(() => (section.state.customFields ?? []).map((f) => ({ ...f, id: f.id ?? genId() })));
+  // Combined display order across BOTH the fixed fields (by key) and custom fields (by id) -- lets
+  // any field move anywhere in the list, not just within its own fixed/custom group. Falls back to
+  // "every fixed field in COVER_FIELD_ORDER's own order, then every custom field in the order they
+  // were added" the first time a job's cover is opened (see SectionState.fieldOrder's own comment).
+  const [rowOrder, setRowOrder] = useState<string[]>(() => {
+    const allKeys = [...COVER_FIELD_ORDER.map(({ key }) => key as string), ...customFields.map((f) => f.id)];
+    const placed = (section.state.fieldOrder ?? []).filter((k) => allKeys.includes(k));
+    const rest = allKeys.filter((k) => !placed.includes(k));
+    return [...placed, ...rest];
+  });
   const [busy, setBusy] = useState(false);
 
   const save = async () => {
     setBusy(true);
     try {
-      const patch = { fields: values, customFields };
+      const patch = { fields: values, customFields, fieldOrder: rowOrder };
       await fetch("/api/section-state", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ jobRoot, sectionId: section.id, patch }),
       });
-      // This component remounts fresh (re-deriving `values`/`customFields` from section.state)
-      // every time its tab is switched away from and back to -- without patching the saved values
-      // into the parent's own `scan` state right here, a save that genuinely succeeded on disk
-      // still looked like it vanished the moment you came back to this tab, because the remount
-      // was reading `section.state` from before this save ever happened.
+      // This component remounts fresh (re-deriving local state from section.state) every time its
+      // tab is switched away from and back to -- without patching the saved values into the
+      // parent's own `scan` state right here, a save that genuinely succeeded on disk still looked
+      // like it vanished the moment you came back to this tab, because the remount was reading
+      // `section.state` from before this save ever happened.
       patchSectionState(section.id, patch);
     } finally {
       setBusy(false);
     }
   };
 
-  const editCustomField = (index: number, patch: Partial<{ label: string; value: string }>) =>
-    setCustomFields((prev) => prev.map((f, i) => (i === index ? { ...f, ...patch } : f)));
+  const editCustomField = (id: string, patch: Partial<{ label: string; value: string }>) =>
+    setCustomFields((prev) => prev.map((f) => (f.id === id ? { ...f, ...patch } : f)));
+
+  const addCustomField = () => {
+    const id = genId();
+    setCustomFields((prev) => [...prev, { id, label: "", value: "" }]);
+    setRowOrder((prev) => [...prev, id]);
+  };
+
+  const removeCustomField = (id: string) => {
+    setCustomFields((prev) => prev.filter((f) => f.id !== id));
+    setRowOrder((prev) => prev.filter((k) => k !== id));
+  };
+
+  const moveRow = (key: string, direction: "up" | "down") => {
+    setRowOrder((prev) => {
+      const idx = prev.indexOf(key);
+      const swapWith = direction === "up" ? idx - 1 : idx + 1;
+      if (idx === -1 || swapWith < 0 || swapWith >= prev.length) return prev;
+      const next = [...prev];
+      [next[idx], next[swapWith]] = [next[swapWith], next[idx]];
+      return next;
+    });
+  };
+
+  const fixedByKey = new Map(COVER_FIELD_ORDER.map((f) => [f.key as string, f]));
+  const customById = new Map(customFields.map((f) => [f.id, f]));
 
   return (
     <div>
       <div className="cover-table-wrap">
-        <table className="preview-table cover-table" style={{ maxWidth: 640 }}>
+        <table className="preview-table cover-table" style={{ maxWidth: 680 }}>
           <tbody>
-            {COVER_FIELD_ORDER.map(({ key, label }) => (
-              <tr key={key as string}>
-                <th style={{ width: 180, textAlign: "left" }}>{label}</th>
-                <td>
-                  <input
-                    type="text"
-                    style={{ width: "100%" }}
-                    value={values[key as string]}
-                    onChange={(e) => setValues((v) => ({ ...v, [key as string]: e.target.value }))}
-                  />
-                </td>
-              </tr>
-            ))}
-            {/* Job-specific extras the tech rep added themselves -- own label AND value, since
-                unlike the fixed rows above there's no preset field name for either. */}
-            {customFields.map((f, i) => (
-              <tr key={i}>
-                <th style={{ width: 180, textAlign: "left" }}>
-                  <input
-                    type="text"
-                    placeholder="Field name"
-                    style={{ width: "100%", fontWeight: 700, color: "#ffffff" }}
-                    value={f.label}
-                    onChange={(e) => editCustomField(i, { label: e.target.value })}
-                  />
-                </th>
-                <td style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                  <input type="text" style={{ width: "100%" }} value={f.value} onChange={(e) => editCustomField(i, { value: e.target.value })} />
+            {rowOrder.map((key, i) => {
+              const fixed = fixedByKey.get(key);
+              const custom = customById.get(key);
+              const reorderButtons = (
+                <div className="field-reorder">
+                  <button type="button" className="section-reorder-btn" disabled={i === 0} onClick={() => moveRow(key, "up")} title="Move up">
+                    ▲
+                  </button>
                   <button
                     type="button"
-                    className="attachment-candidate-remove"
-                    title="Remove this field"
-                    onClick={() => setCustomFields((prev) => prev.filter((_, ri) => ri !== i))}
+                    className="section-reorder-btn"
+                    disabled={i === rowOrder.length - 1}
+                    onClick={() => moveRow(key, "down")}
+                    title="Move down"
                   >
-                    ✕
+                    ▼
                   </button>
-                </td>
-              </tr>
-            ))}
+                </div>
+              );
+              if (fixed) {
+                return (
+                  <tr key={key}>
+                    <td className="field-reorder-cell">{reorderButtons}</td>
+                    <th style={{ width: 170, textAlign: "left" }}>{fixed.label}</th>
+                    <td>
+                      <input
+                        type="text"
+                        style={{ width: "100%" }}
+                        value={values[key]}
+                        onChange={(e) => setValues((v) => ({ ...v, [key]: e.target.value }))}
+                      />
+                    </td>
+                  </tr>
+                );
+              }
+              if (!custom) return null; // a stale key from a previous session (e.g. a since-removed custom field) -- skip rather than crash
+              return (
+                <tr key={key}>
+                  <td className="field-reorder-cell">{reorderButtons}</td>
+                  <th style={{ width: 170, textAlign: "left" }}>
+                    <input
+                      type="text"
+                      placeholder="Field name"
+                      style={{ width: "100%", fontWeight: 700, color: "#ffffff" }}
+                      value={custom.label}
+                      onChange={(e) => editCustomField(key, { label: e.target.value })}
+                    />
+                  </th>
+                  <td style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <input type="text" style={{ width: "100%" }} value={custom.value} onChange={(e) => editCustomField(key, { value: e.target.value })} />
+                    <button type="button" className="attachment-candidate-remove" title="Remove this field" onClick={() => removeCustomField(key)}>
+                      ✕
+                    </button>
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
       <div className="toolbar">
-        <button type="button" className="secondary" onClick={() => setCustomFields((prev) => [...prev, { label: "", value: "" }])}>
+        <button type="button" className="secondary" onClick={addCustomField}>
           + Add field
         </button>
         <button disabled={busy} onClick={save}>
@@ -1293,6 +1355,30 @@ export default function Home() {
     );
   };
 
+  // Reorders the sidebar only -- see JobState.sectionOrder's own comment for why this never
+  // touches the generated report's own page order. Optimistic: the swap applies to `scan.sections`
+  // immediately so the row visibly moves before the save round-trips, same pattern as
+  // patchSectionState above.
+  const moveSectionOrder = (sectionId: string, direction: "up" | "down") => {
+    if (!scan || !jobRoot) return;
+    const ids = scan.sections.map((s) => s.id);
+    const idx = ids.indexOf(sectionId);
+    const swapWith = direction === "up" ? idx - 1 : idx + 1;
+    if (idx === -1 || swapWith < 0 || swapWith >= ids.length) return;
+    [ids[idx], ids[swapWith]] = [ids[swapWith], ids[idx]];
+
+    setScan((prev) => {
+      if (!prev) return prev;
+      const byId = new Map(prev.sections.map((s) => [s.id, s]));
+      return { ...prev, sections: ids.map((id) => byId.get(id)!), sectionOrder: ids };
+    });
+    fetch("/api/section-order", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ jobRoot, order: ids }),
+    });
+  };
+
   // Marking a section reviewed also jumps to the next one in the list — the whole point is to
   // let a tech rep move through the report top-to-bottom without hunting for the next tab
   // themselves. Only advances when marking AS reviewed, not when undoing it.
@@ -1409,14 +1495,39 @@ export default function Home() {
       <div className="app-body">
         <nav className="sidebar">
           <div className="sidebar-scroll">
-            {scan.sections.map((s) => (
-              <button key={s.id} className={`section-item ${s.id === selectedSection.id ? "active" : ""}`} onClick={() => setSelectedId(s.id)}>
-                <div className="title-row">
-                  <span>{s.title}</span>
-                  <StatusBadge status={s.status} acknowledged={s.state.acknowledged} />
+            {scan.sections.map((s, i) => (
+              <div key={s.id} className={`section-item ${s.id === selectedSection.id ? "active" : ""}`}>
+                <button type="button" className="section-item-select" onClick={() => setSelectedId(s.id)}>
+                  <div className="title-row">
+                    <span>{s.title}</span>
+                    <StatusBadge status={s.status} acknowledged={s.state.acknowledged} />
+                  </div>
+                  <div className="confidence-tag">{s.automationConfidence} confidence</div>
+                </button>
+                {/* Sidebar-only reorder -- groups related tabs together for review (e.g. every
+                    heat-treat chart back to back on a job that needs that); doesn't change the
+                    generated report's own page order at all (see JobState.sectionOrder). */}
+                <div className="section-reorder">
+                  <button
+                    type="button"
+                    className="section-reorder-btn"
+                    disabled={i === 0}
+                    onClick={() => moveSectionOrder(s.id, "up")}
+                    title={`Move "${s.title}" up`}
+                  >
+                    ▲
+                  </button>
+                  <button
+                    type="button"
+                    className="section-reorder-btn"
+                    disabled={i === scan.sections.length - 1}
+                    onClick={() => moveSectionOrder(s.id, "down")}
+                    title={`Move "${s.title}" down`}
+                  >
+                    ▼
+                  </button>
                 </div>
-                <div className="confidence-tag">{s.automationConfidence} confidence</div>
-              </button>
+              </div>
             ))}
             <div className="sidebar-logo-spacer" aria-hidden="true">
               <img src="/apg-logo-transparent.png" alt="" className="sidebar-logo-img" />

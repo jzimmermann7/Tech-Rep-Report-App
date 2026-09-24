@@ -23,8 +23,17 @@ export interface SectionState {
    * COVER_FIELD_ORDER set (see CoverEditor's "+ Add field") -- some jobs need to call out
    * something the standard fields don't cover. An array, not a Record, so insertion order (the
    * order the tech rep typed them in) is preserved; a row with either side left blank is dropped
-   * from the generated report the same way a blank standard field already is. */
-  customFields?: Array<{ label: string; value: string }>;
+   * from the generated report the same way a blank standard field already is. Each row gets a
+   * stable id at creation (see CoverEditor) so fieldOrder below can reference it even as its own
+   * label/value are edited later. */
+  customFields?: Array<{ id: string; label: string; value: string }>;
+  /** For the cover section: the tech rep's own display order for every row, standard and custom
+   * mixed together -- entries are a standard field's key (e.g. "customer") or a custom field's id
+   * (see customFields above). Lets a specific field be moved anywhere in the list, not just
+   * reordered within its own standard/custom group. Rows not mentioned here (a standard field
+   * never touched, or a custom field added after this was last saved) render after everything
+   * that is, in their own default order -- see CoverEditor/renderReportHtml's orderCoverRows. */
+  fieldOrder?: string[];
   /** True once a human has looked at this section and accepted it, even if status was
    * "needs-attention" or "missing" — lets "Generate Report" proceed deliberately. */
   acknowledged?: boolean;
@@ -67,6 +76,14 @@ export interface SectionState {
 export interface JobState {
   jobRoot: string;
   sections: Record<string, SectionState>;
+  /** The tech rep's own sidebar order for this job's report sections, by id -- lets related
+   * sections (e.g. every heat-treat chart) be grouped together for review even when the report
+   * template's own fixed order interleaves them with other sections. Purely a review-screen
+   * convenience: it reorders the sidebar list and nothing else -- the generated report's own page
+   * order still follows the template, unaffected by this. Sections not listed here (a job that's
+   * never been reordered, or a section added to the template after this was last saved) render
+   * after everything that is, in the template's own default order -- see /api/scan's orderSections. */
+  sectionOrder?: string[];
 }
 
 function stateDir(): string {
@@ -112,6 +129,13 @@ export async function updateSectionStates(jobRoot: string, patches: Record<strin
   for (const [sectionId, patch] of Object.entries(patches)) {
     state.sections[sectionId] = { ...state.sections[sectionId], ...patch };
   }
+  await saveJobState(state);
+  return state;
+}
+
+export async function updateSectionOrder(jobRoot: string, order: string[]): Promise<JobState> {
+  const state = await loadJobState(jobRoot);
+  state.sectionOrder = order;
   await saveJobState(state);
   return state;
 }

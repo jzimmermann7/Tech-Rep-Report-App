@@ -116,7 +116,6 @@ const ATTACH_AS_IS_NO_PARSE = new Set([
   "finalMomentWeigh",
   "finalNdt",
   "zNotchDimensions",
-  "bucketDimensions",
 ]);
 
 // File types identifyByContent can actually be handed (a PDF as Claude's native document block,
