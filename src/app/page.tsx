@@ -842,7 +842,9 @@ function PhotoSetEditor({ jobRoot, section }: { jobRoot: string; section: Sectio
 
   return (
     <div>
-      <p className="section-reason">{section.statusReason}</p>
+      {/* No section-reason paragraph here -- SectionPanel already shows section.statusReason
+          once, generically, above whichever type-specific editor renders (this one included).
+          A second copy here was printing "N candidate photo(s) found..." twice in a row. */}
       {section.state.draftError && (
         <p className="confidence-note" style={{ color: "#a4141a" }}>
           ⚠ Automatic photo pre-selection didn&apos;t run: {section.state.draftError} Select photos manually below.
@@ -1315,8 +1317,6 @@ function SectionPanel({
           <span>{section.statusReason}</span>
         </p>
       )}
-      {section.confidenceNote && <p className="confidence-note">{section.confidenceNote}</p>}
-
       {/* Keyed on lastGeneratedAt too, not just section.id -- a Rescan while this section is
           already open re-runs autoDraftJob in the background and can fill in a draft that was
           previously empty (e.g. a source file that wasn't found before now is). Without this,

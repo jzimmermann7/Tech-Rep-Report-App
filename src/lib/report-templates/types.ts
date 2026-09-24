@@ -37,8 +37,6 @@ export interface SectionConfig {
   sourceRules: SourceMatchRule[];
   generation: GenerationStrategy;
   automationConfidence: AutomationConfidence;
-  /** Short human-readable note on why this section is rated the way it is, shown in the UI. */
-  confidenceNote?: string;
   /** If true, this section is always flagged "review recommended" even when drafting succeeds. */
   alwaysReview?: boolean;
   /** For llm-narrative sections synthesized from other sections' drafts rather than raw files
