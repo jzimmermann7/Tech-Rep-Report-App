@@ -271,8 +271,6 @@ export const iaReportTemplate: ReportTemplate = {
       generation: "llm-vision-select",
       automationConfidence: "medium",
       alwaysReview: true,
-      confidenceNote:
-        "Preselects Incoming/NDT photos automatically — tech reps aren't picky about volume within that set, so nothing relevant gets dropped, just reordered and screened: exact/near-duplicates and shots too blurry to use are excluded, photos that actually show an indication/marking/highlighted problem area are sorted to the front, and shipping/receiving/crate photos (documenting the part arriving, not its condition) sort to the back rather than being removed. In-process/final-stage photos are still browsable but not preselected, since this is an incoming-inspection report. Falls back to extracting photos from a \"Photos Template\" PDF when there's no raw photo folder. Still flagged for human confirmation since it's an image-judgment call.",
     },
     {
       id: "metallurgicalReport",
