@@ -230,17 +230,14 @@ footer.app-header::before {
   cursor: pointer;
 }
 
+/* color here is what .section-drag-handle picks up via currentColor (it declares no color of its
+   own) -- without it the handle stayed dark and hard to see against the navy hover fill, even
+   though the title and confidence tag below already turned white. Applies to the active tab too
+   now (see .section-item.active:hover below, which matches this navy fill instead of staying
+   white the way the tab looks at rest). */
 .section-item:hover {
   background: #082c6b;
   border-left-color: #0b3d91;
-}
-
-/* Sets the row's own text color, which .section-drag-handle picks up via currentColor (it
-   declares no color of its own) -- without this the handle stayed dark and hard to see against
-   the navy hover fill, even though the title and confidence tag below already turned white.
-   Skipped for the active tab since its background stays white on hover, where white text (and a
-   white handle) would disappear. */
-.section-item:hover:not(.active) {
   color: #ffffff;
 }
 
@@ -248,8 +245,8 @@ footer.app-header::before {
    hover tint darkens the row -- flip them to white on hover. Both already have their own
    explicit color (stronger than inheriting the row's color above), hence needing their own
    rule here too. */
-.section-item:hover:not(.active) .title-row span:first-child,
-.section-item:hover:not(.active) .confidence-tag {
+.section-item:hover .title-row span:first-child,
+.section-item:hover .confidence-tag {
   color: #ffffff;
 }
 
@@ -260,6 +257,15 @@ footer.app-header::before {
      physically connected to the white main panel next to it, like a real notebook-tab,
      instead of interrupted by the divider line. */
   border-right: none;
+}
+
+/* The active tab's own background above would otherwise win over the plain :hover rule (equal
+   specificity, .active declared later) -- this compound selector outranks both, so hovering the
+   currently-selected tab gets the exact same navy-fill-plus-white-text feedback as any other row,
+   instead of silently staying white with unreadable-on-hover black text. */
+.section-item.active:hover {
+  background: #082c6b;
+  border-left-color: #0b3d91;
 }
 
 .section-item-select:hover {
