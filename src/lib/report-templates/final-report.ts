@@ -4,8 +4,10 @@ import type { ReportTemplate } from "./types";
 // Power, plus notes from Jonathan on which exhibits are conditional vs. near-universal). Unlike
 // the I&A Report, this has no narrative summary sections at all (no I&A Summary, FPI/Visual
 // Summary, or Dimensional Summary -- those describe incoming findings, which this deliverable
-// doesn't restate) -- just Recommended Repairs (reused from the I&A Report's own section/data,
-// since it's the same underlying repair-router/CDS source either way) followed by a run of
+// doesn't restate) -- just a Repair Summary (reused from the I&A Report's own recommendedRepairs
+// section/data, since it's the same underlying repair-router/CDS source either way -- titled
+// differently here per tech rep feedback: a Final Report documents repairs already performed,
+// it isn't recommending anything, so "Recommended Repairs" doesn't fit) followed by a run of
 // completion-stage re-checks and certifications. Section order here matches the real report's own
 // page order as closely as this app's rendering pipeline supports (see renderReportHtml.ts's
 // INLINE_ATTACH_SECTIONS): dimensional re-checks and true attach-as-is certifications /
@@ -30,7 +32,7 @@ export const finalReportTemplate: ReportTemplate = {
     },
     {
       id: "recommendedRepairs",
-      title: "Recommended Repairs",
+      title: "Repair Summary",
       sourceRules: [
         {
           kind: "filenamePattern",

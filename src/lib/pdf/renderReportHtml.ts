@@ -287,11 +287,11 @@ const REPORT_STYLES = (apgBlue: string, apgBarGray: string) => `
      the extra rows were getting clipped off the bottom instead of flowing onto a second page, the
      same "let it flow across pages" fix already applied to table-section/repairs-section above. */
   .cover { text-align: center; padding-top: 60px; page-break-inside: auto; }
-  .cover-logo { width: 320px; margin-bottom: 24px; }
-  /* Bumped from 26px/17px per tech rep feedback ("a little bigger"). cover-label widened to match
-     cover-row's larger font so a long fixed label (e.g. "Cast Part Number:") doesn't crowd its
-     value. */
-  .cover h1 { font-size: 30px; margin: 0 0 40px; }
+  .cover-logo { width: 340px; margin-bottom: 24px; }
+  /* Bumped again (30px/19px -> 38px/24px) -- still noticeably smaller than APG's own real report
+     per a direct tech rep comparison (see the two reference screenshots this size was matched
+     against). cover-label widened, and cover-row given more vertical breathing room, to match. */
+  .cover h1 { font-size: 38px; margin: 0 0 40px; }
   /* display: block (with width: fit-content + margin: auto standing in for what inline-block used
      to give for free -- shrink-to-content, centered by the parent) instead of inline-block. An
      inline-block is one atomic box for pagination purposes: when it can't fit entirely on the
@@ -300,8 +300,8 @@ const REPORT_STYLES = (apgBlue: string, apgBarGray: string) => `
      restriction, so its .cover-row children (each already page-break-inside: avoid) can split
      across the page boundary wherever they actually run out of room. */
   .cover-fields { display: block; width: fit-content; margin: 0 auto; text-align: left; }
-  .cover-row { display: flex; gap: 24px; padding: 10px 0; font-size: 19px; page-break-inside: avoid; }
-  .cover-label { width: 190px; flex-shrink: 0; color: #6a6a6a; font-weight: 700; }
+  .cover-row { display: flex; gap: 24px; padding: 12px 0; font-size: 24px; page-break-inside: avoid; }
+  .cover-label { width: 250px; flex-shrink: 0; color: #6a6a6a; font-weight: 700; }
   .cover-value { font-weight: 700; color: #1a1a1a; }
   /* The cover's second page (see renderReportSegments -- everything after "Tech Rep" always
      starts a fresh page, per tech rep feedback) reuses .cover for identical centering/typography
