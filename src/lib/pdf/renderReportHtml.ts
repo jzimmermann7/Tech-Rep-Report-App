@@ -300,7 +300,9 @@ const REPORT_STYLES = (apgBlue: string, apgBarGray: string) => `
      restriction, so its .cover-row children (each already page-break-inside: avoid) can split
      across the page boundary wherever they actually run out of room. */
   .cover-fields { display: block; width: fit-content; margin: 0 auto; text-align: left; }
-  .cover-row { display: flex; gap: 24px; padding: 12px 0; font-size: 24px; page-break-inside: avoid; }
+  /* Padding (row-to-row) and gap (label-to-value) both widened per tech rep feedback -- more
+     breathing room between each line on the cover page. */
+  .cover-row { display: flex; gap: 32px; padding: 18px 0; font-size: 24px; page-break-inside: avoid; }
   .cover-label { width: 250px; flex-shrink: 0; color: #6a6a6a; font-weight: 700; }
   .cover-value { font-weight: 700; color: #1a1a1a; }
   /* The cover's second page (see renderReportSegments -- everything after "Tech Rep" always
