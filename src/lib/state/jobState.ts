@@ -103,6 +103,19 @@ export function applySectionOrder<T extends { id: string }>(sections: T[], order
   return [...placed, ...sections.filter((s) => !placedIds.has(s.id))];
 }
 
+/** On a job's very first scan (no cover date saved yet), locks in today's date as the cover
+ * page's "Date" field -- the day the tech rep actually started this report, not whatever date (if
+ * any) happened to get parsed from a source file. Returns true if it set something (caller should
+ * then saveJobState); a no-op on every later scan once a date -- auto-set or the tech rep's own
+ * manual entry via CoverEditor -- is already there, so it never fights a later edit. */
+export function ensureReportStartDate(state: JobState): boolean {
+  if (state.sections.cover?.fields?.date) return false;
+  const now = new Date();
+  const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+  state.sections.cover = { ...state.sections.cover, fields: { ...state.sections.cover?.fields, date: today } };
+  return true;
+}
+
 function stateDir(): string {
   const base = process.env.LOCALAPPDATA || path.join(os.homedir(), "AppData", "Local");
   return path.join(base, "TechRepReportApp", "jobs");
