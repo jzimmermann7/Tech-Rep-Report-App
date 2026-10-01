@@ -8,6 +8,15 @@ import type { ParsedTable } from "./types";
  * column-blocks of [APG#, Serial#, Comment] starting at columns A, E, I,
  * each covering a third of the population. Data starts row 8.
  */
+
+/** APG # is usually a plain integer, but a mid-job bucket replacement gets a letter suffix
+ * instead (e.g. "78R") -- sorting/range logic works off this leading numeric part while the full
+ * string (with its suffix) is kept for display, so "78R" still slots in next to the bucket it
+ * replaced instead of sorting to the very end (or being dropped) as NaN would. */
+function apgNumericPart(apgNum: string): number {
+  const match = apgNum.match(/^\d+/);
+  return match ? Number(match[0]) : NaN;
+}
 /** DS-0554's own header block (confirmed against Job 20443): row 3 = Customer:/Date:/Page:,
  * row 4 = APG Job #:/Insp:/Cast P/N:, row 5 = Unit/Frame:/Row/Stg:/Mach P/N:, each label in
  * column B or F or H with its value one or two columns to the right. */
@@ -51,22 +60,26 @@ export async function parseSerialNumberList(absolutePath: string): Promise<Parse
     for (let r = 8; r <= sheet.rowCount; r++) {
       const row = sheet.getRow(r);
       const apgNum = cellText(row.getCell(startCol));
-      if (!/^\d+$/.test(apgNum)) continue; // skips gaps and trailing footer/notes text
+      // A mid-job bucket replacement gets a letter suffix instead of a new number (e.g. "78R" --
+      // confirmed against a real job's DS-0554 NOTES row: "APG-3481-21 to replace #78 Now 78R"),
+      // so this only requires a leading digit run, not a pure integer -- a strict full-match test
+      // dropped that row outright, which read as the list skipping straight from 77 to 79.
+      if (!/^\d+/.test(apgNum)) continue; // skips gaps and trailing footer/notes text
       const serial = cellText(row.getCell(startCol + 1));
       const comment = cellText(row.getCell(startCol + 2));
       rows.push({ "APG #": apgNum, "Serial #": serial, Comment: comment });
     }
   }
 
-  rows.sort((a, b) => Number(a["APG #"]) - Number(b["APG #"]));
+  rows.sort((a, b) => apgNumericPart(a["APG #"]) - apgNumericPart(b["APG #"]));
 
   // Each of the 3 parallel blocks is sized to a fixed capacity, not the job's real bucket
   // count, so the tail of the last block is often unused (numbered, but blank) padding rather
   // than real data. Drop rows past the highest APG # that actually has a serial recorded.
   const notes: string[] = [];
   const realRows = rows.filter((r) => r["Serial #"] !== "");
-  const maxRealApgNum = realRows.length > 0 ? Math.max(...realRows.map((r) => Number(r["APG #"]))) : 0;
-  const trimmedRows = rows.filter((r) => Number(r["APG #"]) <= maxRealApgNum);
+  const maxRealApgNum = realRows.length > 0 ? Math.max(...realRows.map((r) => apgNumericPart(r["APG #"]))) : 0;
+  const trimmedRows = rows.filter((r) => apgNumericPart(r["APG #"]) <= maxRealApgNum);
 
   const stillBlank = trimmedRows.filter((r) => r["Serial #"] === "");
   if (stillBlank.length > 0) {

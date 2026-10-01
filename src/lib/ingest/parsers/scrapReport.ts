@@ -32,7 +32,10 @@ export async function parseScrapReport(absolutePath: string): Promise<ParsedTabl
   for (let r = 9; r <= sheet.rowCount; r++) {
     const row = sheet.getRow(r);
     const apgNum = cellText(row.getCell(colIndex.apg));
-    if (!/^\d+$/.test(apgNum)) continue; // skips gaps and the trailing COUNTIF totals row
+    // A mid-job bucket replacement gets a letter suffix instead of a new number (e.g. "78R") --
+    // only a leading digit run is required, not a pure integer, so that row isn't dropped outright
+    // (see serialNumberList.ts's identical fix for the same DS-0554 "APG #" column convention).
+    if (!/^\d+/.test(apgNum)) continue; // skips gaps and the trailing COUNTIF totals row
 
     allRows.push({
       "APG #": apgNum,
@@ -58,9 +61,9 @@ export async function parseScrapReport(absolutePath: string): Promise<ParsedTabl
     rows: scrapRows,
     sampleSize: scrapRows.length,
     populationSize,
-    notes:
-      scrapRows.length > 0
-        ? [`${scrapRows.length} of ${populationSize} buckets in this set have a scrap determination recorded.`]
-        : [`No buckets in this set have a scrap determination recorded yet.`],
+    // Per tech rep feedback, the generated report no longer prints a "N of M buckets have a scrap
+    // determination recorded" line under this table -- the table itself (zero rows when nothing's
+    // been scrapped yet) already says that.
+    notes: [],
   };
 }
