@@ -55,9 +55,9 @@ a {
   align-items: center;
   gap: 12px;
   flex-wrap: wrap;
-  background: rgba(255, 255, 255, 0.72);
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
+  /* Same white-to-blue gradient as the folder-selection (home) screen's backdrop -- see
+     .folder-picker::after -- so the top and bottom bars match it. */
+  background: linear-gradient(135deg, #eaf3fc 0%, #cfe4fb 45%, #9dc2ec 75%, #6fa3e0 100%);
   position: relative;
   z-index: 1;
   box-shadow: 0 4px 14px rgba(11, 61, 145, 0.12);
@@ -68,12 +68,14 @@ a {
    page bottom unless the footer draws its own continuation of that same line. */
 footer.app-header {
   position: relative;
-  /* Left of the sidebar/main-panel divider (319px) stays the page's light blue;
-     right of it (under the main panel) is frosted glass, matching the panel above it. */
-  background: linear-gradient(to right, transparent 0, transparent 319px, rgba(255, 255, 255, 0.72) 319px, rgba(255, 255, 255, 0.72) 100%);
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
   box-shadow: 0 -4px 14px rgba(11, 61, 145, 0.1);
+}
+
+/* The amber warning text was tuned for a near-white bar; darker so it stays readable on the
+   blue end of the gradient. */
+footer.app-header .confidence-note {
+  color: #5c4000;
+  font-weight: 600;
 }
 
 footer.app-header::before {
@@ -89,7 +91,7 @@ footer.app-header::before {
 .app-header .job-path {
   font-family: var(--font-geist-mono), monospace;
   font-size: 12px;
-  color: #555;
+  color: #1a2f55;
   flex: 1;
   min-width: 200px;
   overflow: hidden;
@@ -182,7 +184,8 @@ footer.app-header::before {
   border-right: 1px solid #d5e1f2;
   border-left: 3px solid transparent;
   border-radius: 0;
-  background: none;
+  /* Light blue at rest so unselected tabs contrast with the white selected tab. */
+  background: #cfe4fb;
   color: #1a1a1a;
   transition: background-color 0.15s ease, border-left-color 0.15s ease;
 }
