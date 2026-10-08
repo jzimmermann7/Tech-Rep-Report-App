@@ -234,25 +234,17 @@ const REPORT_STYLES = (apgBlue: string, apgBarGray: string) => `
      breaking a summary into named categories instead of one flowing paragraph. Extra top margin
      (vs. the 14px this used to be) matches the generous gap between categories in APG's own
      original reports -- see .narrative-section below for why the whole section scaled up. */
-  p.subhead { text-decoration: underline; font-weight: 400; margin: 20px 0 0; }
+  p.subhead { text-decoration: underline; font-weight: 700; margin: 20px 0 0; }
   p.subhead:first-child { margin-top: 0; }
-  /* FPI & Visual Inspection Summary's own category subheads (Tips:, Airfoil:, Platform:, ...) --
-     bolded per tech rep feedback, on top of the underline every narrative section's subheads
-     already get. Scoped to this one section rather than the shared p.subhead rule above, since
-     that's what was actually asked for. */
-  .fpi-visual-section p.subhead { font-weight: 700; }
   .narrative-list { margin: 0 0 6px; padding-left: 22px; }
   .narrative-list li { margin-bottom: 1px; line-height: 1.5; }
   /* I&A Summary, FPI & Visual, Dimensional Summary, Recommended Repairs — larger than the base
      body size (which stays small so data tables keep fitting) since these are the sections
-     someone actually sits down and reads. Sized to match APG's own original reports' text size
-     (confirmed directly against real screenshots of Job 20443's completed report -- the app's
-     text was noticeably smaller/denser than the real thing, not just a stylistic choice). */
-  .narrative-section p, .narrative-section li { font-size: 17px; line-height: 1.6; }
-  /* I&A Summary and FPI & Visual Inspection Summary specifically, bumped further per tech rep
-     feedback -- these two get read closest, so a bit larger again than the other narrative
-     sections' already-enlarged 17px. */
-  .narrative-section-large p, .narrative-section-large li { font-size: 19px; }
+     someone actually sits down and reads. Every narrative section shares one size, bold
+     underlined subheads included, per tech rep feedback that the summaries should look uniform
+     (the I&A Summary and FPI & Visual look was the one they liked; Dimensional Summary used to
+     render smaller with non-bold subheads). */
+  .narrative-section p, .narrative-section li { font-size: 19px; line-height: 1.6; }
   section { page-break-inside: avoid; }
   section.report-page { page-break-before: always; margin-bottom: 16px; }
   section.table-section { page-break-inside: auto; }
@@ -270,7 +262,9 @@ const REPORT_STYLES = (apgBlue: string, apgBarGray: string) => `
      steps are actually meant to be read, and only starts the right column once the left one is
      genuinely full. */
   .repairs-columns { column-count: 2; column-gap: 28px; column-fill: auto; }
-  .repairs-columns p { font-size: 13px; line-height: 1.35; margin: 0 0 5px; break-inside: avoid; }
+  /* 16px (was 13px) per tech rep feedback -- closer to the summaries' size so everything looks
+     consistent, while still fitting a typical list on one page in two columns. */
+  .repairs-columns p { font-size: 16px; line-height: 1.35; margin: 0 0 5px; break-inside: avoid; }
 
   /* Letterhead used at the top of every page after the cover, matching APG's standard report
      header: small logo, centered bold title, blue-to-gray bar underneath. The logo is absolutely
@@ -438,14 +432,6 @@ export async function renderReportSegments(scanIn: JobScanResult, state: JobStat
       </section>`);
   }
 
-  // Scrap Report / SN Recording Sheet / Airflow Report / Z-Drop Dimensions are all genuinely
-  // optional -- most jobs won't have scrap or prior-repair history to report, most jobs don't
-  // need an airflow report, and Z-Drop Dimensions doesn't apply to 1st-stage buckets at all (see
-  // zDropDimension.ts). Unlike serialNumberList/heightDimForm/etc (core to every I&A report, so a
-  // real gap there should still show as an honest "No data available" page), these four are left
-  // out of the generated report entirely rather than printing an empty or "missing" page nobody
-  // asked for -- exactly the "conditional logic, not on every report" these were built for.
-  const OMIT_WHEN_EMPTY = new Set(["scrapReport", "snRecordingSheet", "airflowReport", "zDropDimension", "finalScrapReport", "finalAirflowReport"]);
   const skippedAttachments: string[] = [];
 
   // Every remaining section, in scan.sections' own order -- reordered per sectionOrder just above
@@ -460,6 +446,9 @@ export async function renderReportSegments(scanIn: JobScanResult, state: JobStat
   for (const section of scan.sections) {
     const id = section.id;
     if (id === "cover") continue;
+    // The tech rep's own "leave this page out" (the ✕ on its sidebar tab -- see
+    // SectionState.excludeFromReport).
+    if (state.sections[id]?.excludeFromReport) continue;
 
     if (section.generation === "llm-narrative") {
       const narrativeHtml = renderNarrative(contentFor(id));
@@ -475,8 +464,6 @@ export async function renderReportSegments(scanIn: JobScanResult, state: JobStat
         "report-page",
         "narrative-section",
         id === "recommendedRepairs" && "repairs-section",
-        (id === "iaSummary" || id === "fpiVisual") && "narrative-section-large",
-        id === "fpiVisual" && "fpi-visual-section",
       ]
         .filter(Boolean)
         .join(" ");
@@ -497,10 +484,13 @@ export async function renderReportSegments(scanIn: JobScanResult, state: JobStat
         continue;
       }
       const editedTable = section.parsedTable ? applyTableEdits(section.parsedTable, state.sections[id]?.tableEdits) : undefined;
-      if (OMIT_WHEN_EMPTY.has(id) && (!editedTable || editedTable.rows.length === 0)) continue;
-      const body = editedTable
-        ? renderTable(editedTable, { columnBlocks: id === "serialNumberList" ? 3 : 1, notesText: state.sections[id]?.tableNotes })
-        : `<p class="missing">No data available.</p>`;
+      // A table section with nothing to show (no source file for it, or a table with zero rows --
+      // e.g. Wall Thickness/Dovetail on solid buckets, or a Scrap Report with nothing scrapped) is
+      // left out of the report entirely rather than printing an empty "No data available" page,
+      // per tech rep feedback. Applies to every table section; the review screen's own
+      // willBeOmitted check (page.tsx) mirrors this so the sidebar says so.
+      if (!editedTable || editedTable.rows.length === 0) continue;
+      const body = renderTable(editedTable, { columnBlocks: id === "serialNumberList" ? 3 : 1, notesText: state.sections[id]?.tableNotes });
       bodyParts.push(`<section class="report-page table-section">${pageHeader(section.title, logo)}${body}</section>`);
       continue;
     }

@@ -311,6 +311,48 @@ footer.app-header::before {
   color: #a4141a;
 }
 
+.status-badge.omitted {
+  background: #e4e8ef;
+  color: #5b6779;
+}
+
+/* A section that won't be in the generated report (removed, or an empty table section): dimmed
+   so the sidebar reads at a glance as "this isn't going in." */
+.section-item.omitted .title-row span:first-child {
+  opacity: 0.55;
+}
+
+.section-item.omitted .title-row span:first-child,
+.section-item.omitted .confidence-tag {
+  text-decoration: line-through;
+}
+
+/* The ✕ (leave out of report) / ↺ (add back) at the right edge of a sidebar tab. */
+.section-remove-btn {
+  flex: none;
+  align-self: center;
+  margin: 0 8px 0 2px;
+  padding: 2px 7px;
+  border: none;
+  background: none;
+  box-shadow: none;
+  color: currentColor;
+  font-size: 14px;
+  line-height: 1;
+  opacity: 0.45;
+  cursor: pointer;
+}
+
+.section-item:hover .section-remove-btn {
+  opacity: 0.9;
+}
+
+.section-item .section-remove-btn:hover {
+  opacity: 1;
+  background: rgba(11, 61, 145, 0.14);
+  box-shadow: none;
+}
+
 .confidence-tag {
   display: inline-block;
   font-size: 10px;
