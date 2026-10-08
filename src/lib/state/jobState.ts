@@ -71,6 +71,11 @@ export interface SectionState {
    * table" -- same "human pick overrides the automatic one" convention as selectedAttachmentPath
    * above, just an exclude rather than a swap since there's only ever one auto-detected PDF here. */
   excludePrintPdf?: boolean;
+  /** True to leave this whole section out of the generated report -- the tech rep's own "this job
+   * doesn't need that page" (e.g. Wall Thickness on solid buckets), via the ✕ on its sidebar tab.
+   * Reversible; the section stays in the sidebar, dimmed, so it can be added back. Separate from
+   * renderReportHtml.ts's automatic omission of table sections that simply have no data. */
+  excludeFromReport?: boolean;
 }
 
 export interface JobState {

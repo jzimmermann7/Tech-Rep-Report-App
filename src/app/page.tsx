@@ -49,7 +49,20 @@ function ReportTypePicker({ onChosen }: { onChosen: (id: ReportTypeId) => void }
   );
 }
 
-function StatusBadge({ status, acknowledged }: { status: string; acknowledged?: boolean }) {
+/** Why a section won't appear in the generated report, if it won't: "removed" (the tech rep took
+ * it out with the ✕), or "empty" (a table section with no data and no completed form to embed --
+ * renderReportHtml.ts leaves these out automatically). Mirrors that file's own checks. */
+function omittedReason(s: SectionWithState): "removed" | "empty" | null {
+  if (s.state.excludeFromReport) return "removed";
+  if (s.generation === "table-from-source") {
+    const printPdfInUse = Boolean(s.printPdfFile) && !s.state.excludePrintPdf;
+    if (!printPdfInUse && (!s.parsedTable || s.parsedTable.rows.length === 0)) return "empty";
+  }
+  return null;
+}
+
+function StatusBadge({ status, acknowledged, omitted }: { status: string; acknowledged?: boolean; omitted?: "removed" | "empty" | null }) {
+  if (omitted) return <span className="status-badge omitted">{omitted === "removed" ? "Removed" : "Not in report"}</span>;
   // "ready" means the data/draft is there, not that a person has looked at it — don't let that
   // read as done until the tech rep actually clicks "Tech Rep Reviewed". But once they do,
   // that click is the tech rep vouching for the section themselves -- show it as Ready (green)
@@ -1260,6 +1273,7 @@ function SectionPanel({
   metadata,
   onRefresh,
   onReviewed,
+  onToggleExcluded,
   patchSectionState,
 }: {
   jobRoot: string;
@@ -1267,8 +1281,10 @@ function SectionPanel({
   metadata: JobScanResult["metadata"];
   onRefresh: () => void;
   onReviewed: (acknowledged: boolean) => void;
+  onToggleExcluded: (excluded: boolean) => void;
   patchSectionState: (sectionId: string, patch: Partial<SectionState>) => void;
 }) {
+  const omitted = omittedReason(section);
   // The completed print-ready PDF scanJobFolder.ts found for this section (see PRINT_PDF_SECTIONS)
   // is normally embedded verbatim over this app's own re-rendered table -- almost always right,
   // but the tech rep always has a direct way to say "no, just use the table" instead. Excluding it
@@ -1293,9 +1309,20 @@ function SectionPanel({
         </button>
       </div>
       <div className="title-row" style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8, marginTop: 8 }}>
-        <StatusBadge status={section.status} acknowledged={section.state.acknowledged} />
+        <StatusBadge status={section.status} acknowledged={section.state.acknowledged} omitted={omitted} />
         <span className="confidence-tag">automation confidence: {section.automationConfidence}</span>
       </div>
+      {omitted === "removed" && (
+        <p className="section-reason">
+          This section is removed — it won&apos;t appear in the generated report.{" "}
+          <button className="link-button" onClick={() => onToggleExcluded(false)}>
+            Add it back
+          </button>
+        </p>
+      )}
+      {omitted === "empty" && (
+        <p className="section-reason">There&apos;s no data for this section, so it will be left out of the generated report automatically.</p>
+      )}
       {printPdfExcluded ? (
         <p className="section-reason">
           The completed form found for this section is excluded — this section&apos;s own table will be used in the generated report instead.{" "}
@@ -1425,6 +1452,18 @@ export default function Home() {
   // Marking a section reviewed also jumps to the next one in the list — the whole point is to
   // let a tech rep move through the report top-to-bottom without hunting for the next tab
   // themselves. Only advances when marking AS reviewed, not when undoing it.
+  // The ✕ on a sidebar tab: leave this section out of the generated report (or add it back).
+  // Optimistic like patchSectionState; the section stays in the list, dimmed, so it's reversible.
+  const setExcludeFromReport = async (sectionId: string, excluded: boolean) => {
+    if (!jobRoot) return;
+    patchSectionState(sectionId, { excludeFromReport: excluded });
+    await fetch("/api/section-state", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ jobRoot, sectionId, patch: { excludeFromReport: excluded } }),
+    });
+  };
+
   const markReviewed = async (sectionId: string, acknowledged: boolean) => {
     if (!jobRoot || !scan) return;
     patchSectionState(sectionId, { acknowledged });
@@ -1509,7 +1548,9 @@ export default function Home() {
   }
 
   const selectedSection = scan.sections.find((s) => s.id === selectedId) ?? scan.sections[0];
-  const allAddressed = scan.sections.every((s) => s.status === "ready" || s.state.acknowledged);
+  // A section that isn't going into the report (removed, or an empty table section) can't need
+  // attention.
+  const allAddressed = scan.sections.every((s) => s.status === "ready" || s.state.acknowledged || omittedReason(s));
 
   return (
     <div className="app-shell">
@@ -1547,7 +1588,7 @@ export default function Home() {
               // grabbing the handle doesn't fight with clicking the select button right next to it.
               <div
                 key={s.id}
-                className={`section-item ${s.id === selectedSection.id ? "active" : ""} ${
+                className={`section-item ${s.id === selectedSection.id ? "active" : ""} ${omittedReason(s) ? "omitted" : ""} ${
                   draggingSectionId === s.id ? "dragging" : ""
                 } ${dragOverSectionId === s.id && draggingSectionId && draggingSectionId !== s.id ? "drag-over" : ""}`}
                 onDragEnter={(e) => {
@@ -1581,10 +1622,20 @@ export default function Home() {
                 <button type="button" className="section-item-select" onClick={() => setSelectedId(s.id)}>
                   <div className="title-row">
                     <span>{s.title}</span>
-                    <StatusBadge status={s.status} acknowledged={s.state.acknowledged} />
+                    <StatusBadge status={s.status} acknowledged={s.state.acknowledged} omitted={omittedReason(s)} />
                   </div>
                   <div className="confidence-tag">{s.automationConfidence} confidence</div>
                 </button>
+                {s.id !== "cover" && (
+                  <button
+                    type="button"
+                    className="section-remove-btn"
+                    title={s.state.excludeFromReport ? `Add "${s.title}" back to the report` : `Leave "${s.title}" out of the report`}
+                    onClick={() => setExcludeFromReport(s.id, !s.state.excludeFromReport)}
+                  >
+                    {s.state.excludeFromReport ? "↺" : "✕"}
+                  </button>
+                )}
               </div>
             ))}
             <div className="sidebar-logo-spacer" aria-hidden="true">
@@ -1599,6 +1650,7 @@ export default function Home() {
             metadata={scan.metadata}
             onRefresh={() => runScan(jobRoot)}
             onReviewed={(acknowledged) => markReviewed(selectedSection.id, acknowledged)}
+            onToggleExcluded={(excluded) => setExcludeFromReport(selectedSection.id, excluded)}
             patchSectionState={patchSectionState}
           />
         </main>
