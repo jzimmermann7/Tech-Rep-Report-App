@@ -891,10 +891,13 @@ function PhotoSetEditor({ jobRoot, section }: { jobRoot: string; section: Sectio
         <div className="photo-grid">
           {shown.map((f) => (
             <div key={f.relativePath} className={`photo-tile ${selected.includes(f.relativePath) ? "selected" : ""}`} onClick={() => toggle(f.relativePath)}>
+              {/* A small cached thumbnail (w=360), not the 5 MB camera original -- see the
+                  photo-file route. The generated report still embeds the full photo. */}
               <img
-                src={`/api/photo-file?jobRoot=${encodeURIComponent(jobRoot)}&path=${encodeURIComponent(f.relativePath)}`}
+                src={`/api/photo-file?jobRoot=${encodeURIComponent(jobRoot)}&path=${encodeURIComponent(f.relativePath)}&w=360`}
                 alt={f.relativePath}
                 loading="lazy"
+                decoding="async"
               />
               <div className="caption">{f.relativePath.split("/").pop()}</div>
             </div>
