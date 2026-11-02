@@ -1,4 +1,6 @@
+import crypto from "crypto";
 import { promises as fs } from "fs";
+import os from "os";
 import path from "path";
 import { execFile } from "child_process";
 import { promisify } from "util";
@@ -83,10 +85,23 @@ export async function renderXlsxSheetToPdf(xlsxPath: string, sheetNamePattern: R
     return null; // source file vanished mid-scan, etc.
   }
 
-  await fs.mkdir(cacheDir, { recursive: true });
-  const scriptPath = path.join(cacheDir, ".render-sheet.ps1");
+  // Excel can't open a workbook whose full path is over 218 characters ("Unable to get the Open
+  // property of the Workbooks class"), and a job folder path plus a verbose workbook name routinely
+  // is -- on T: and even more so in a OneDrive copy. So Excel always works entirely inside a
+  // short-path folder under the Windows temp directory: it opens a copy of the workbook there,
+  // exports there, and only the finished PDF is copied back to cacheDir. (The script lives there
+  // too -- powershell -File has its own path-length limit.)
+  const base = await fs.realpath(os.tmpdir()).catch(() => os.tmpdir());
+  const workDir = path.join(base, "TechRepReportApp-excel", crypto.createHash("sha256").update(xlsxPath).digest("hex").slice(0, 16));
+  const scriptPath = path.join(workDir, "render-sheet.ps1");
+  const workCopy = path.join(workDir, `source${path.extname(xlsxPath)}`);
+  const workPdf = path.join(workDir, "out.pdf");
 
   try {
+    await fs.mkdir(workDir, { recursive: true });
+    await fs.mkdir(toLongPath(cacheDir), { recursive: true });
+    await fs.copyFile(toLongPath(xlsxPath), workCopy);
+    await fs.rm(workPdf, { force: true });
     await fs.writeFile(scriptPath, RENDER_SHEET_PS1, "utf8");
     await execFileAsync(
       "powershell.exe",
@@ -98,19 +113,20 @@ export async function renderXlsxSheetToPdf(xlsxPath: string, sheetNamePattern: R
         "-File",
         scriptPath,
         "-InputPath",
-        xlsxPath,
+        workCopy,
         "-SheetPattern",
         sheetNamePattern.source,
         "-OutputPath",
-        outputPath,
+        workPdf,
       ],
       { timeout: 60_000 }
     );
-    await fs.access(outputPath);
+    await fs.access(workPdf);
+    await fs.copyFile(workPdf, toLongPath(outputPath));
     return outputPath;
   } catch {
     return null; // no Excel installed, it hung/errored, etc. -- caller falls back to our own table
   } finally {
-    await fs.rm(scriptPath, { force: true }).catch(() => {});
+    await fs.rm(workDir, { recursive: true, force: true }).catch(() => {});
   }
 }
