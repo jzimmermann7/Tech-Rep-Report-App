@@ -1425,11 +1425,20 @@ button.generate-report:active:not(:disabled) {
   color: #0b3d91;
 }
 
+/* Inside the box, left of the ✕ -- as its own line below the box it made the box area taller and
+   pushed the vertically centered ✕ down while a search ran. */
 .folder-search-status {
-  display: block;
-  margin-top: 6px;
+  position: absolute;
+  top: 50%;
+  right: 36px;
+  transform: translateY(-50%);
   font-size: 12px;
   color: #6a7fa3;
+  pointer-events: none;
+}
+
+.folder-search-input.searching {
+  padding-right: 110px;
 }
 
 .folder-search-hint {

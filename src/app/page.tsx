@@ -177,19 +177,27 @@ function FolderPicker({ onJobFolderChosen, onBack }: { onJobFolderChosen: (path:
       return;
     }
     setSearching(true);
+    // A newer keystroke cancels the older search, so a slow earlier query ("2") can't land after
+    // and overwrite the results for the one actually typed ("20992").
+    const controller = new AbortController();
     const handle = setTimeout(async () => {
       try {
-        const res = await fetch(`/api/browse?dir=${encodeURIComponent(dir)}&q=${encodeURIComponent(query.trim())}`);
+        const res = await fetch(`/api/browse?dir=${encodeURIComponent(dir)}&q=${encodeURIComponent(query.trim())}`, { signal: controller.signal });
         const data = await res.json();
-        if (res.ok) {
+        if (res.ok && !controller.signal.aborted) {
           setSearchResults(data.results ?? []);
           setSearchTruncated(!!data.truncated);
         }
+      } catch {
+        // aborted by a newer keystroke
       } finally {
-        setSearching(false);
+        if (!controller.signal.aborted) setSearching(false);
       }
     }, 300);
-    return () => clearTimeout(handle);
+    return () => {
+      clearTimeout(handle);
+      controller.abort();
+    };
   }, [query, dir, isDriveList]);
 
   const searchActive = searchResults !== null;
@@ -229,7 +237,7 @@ function FolderPicker({ onJobFolderChosen, onBack }: { onJobFolderChosen: (path:
           <div className="folder-search">
             <input
               type="text"
-              className="folder-search-input"
+              className={`folder-search-input ${searching ? "searching" : ""}`}
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Search job folders inside here…"
