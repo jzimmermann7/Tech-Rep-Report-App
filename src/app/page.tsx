@@ -5,6 +5,7 @@ import type { JobScanResult, SectionScanResult } from "@/lib/ingest/scanJobFolde
 import type { JobFile } from "@/lib/ingest/fileWalk";
 import { COVER_FIELD_ORDER } from "@/lib/ingest/jobMetadata";
 import type { SectionState } from "@/lib/state/jobState";
+import { RichTextEditor } from "./RichTextEditor";
 
 type SectionWithState = SectionScanResult & { state: SectionState };
 type ScanResponse = Omit<JobScanResult, "sections"> & { sections: SectionWithState[]; sectionOrder?: string[] };
@@ -708,6 +709,9 @@ function NarrativeEditor({
   // Keyed by section.id in SectionPanel below, so this remounts (and re-derives its initial
   // state from `section`) whenever the reviewer switches sections — no sync effect needed.
   const [draft, setDraft] = useState(section.state.content ?? "");
+  // The rich editor only reads its starting text on mount, so a draft that replaces the text
+  // wholesale (a fresh draft or Claude's revision) bumps this to remount it with the new text.
+  const [editorKey, setEditorKey] = useState(0);
   const [instruction, setInstruction] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -722,6 +726,7 @@ function NarrativeEditor({
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
       setDraft(data.content ?? "");
+      setEditorKey((k) => k + 1);
       onUpdated(data.content ?? "");
       setInstruction("");
     } catch (e) {
@@ -753,7 +758,7 @@ function NarrativeEditor({
           instruction&quot; to ask Claude for a fresh attempt.
         </p>
       )}
-      <textarea className="draft-textarea" value={draft} onChange={(e) => setDraft(e.target.value)} placeholder="No draft yet — flagged for manual review." />
+      <RichTextEditor key={editorKey} initialValue={draft} onChange={setDraft} placeholder="No draft yet — flagged for manual review." />
       <div className="toolbar">
         <button className="secondary" disabled={busy} onClick={saveManualEdit}>
           Save Edit

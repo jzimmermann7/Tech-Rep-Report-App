@@ -13,7 +13,8 @@ Format: match APG's usual report layout, which is short named categories with bu
 - A line starting with "- " is a bullet under the subheading (or paragraph) immediately above it.
 - A blank line separates one subheading+bullets (or paragraph) group from the next — don't add any other markup for spacing.
 - A line starting with "NOTE:" is rendered bold and used only for the exact disclaimer text you're handed verbatim — never invent a new NOTE.
-- Anything else is a plain paragraph line (one line in, one paragraph out — don't manually wrap long sentences).`;
+- Anything else is a plain paragraph line (one line in, one paragraph out — don't manually wrap long sentences).
+- Inside a line, **text** is bold, __text__ is underlined and //text// is italic -- the reviewer's own formatting. Keep every one of these markers around the same words unless told to change them.`;
 
 /** Fixed lines that belong in every report of their kind regardless of job specifics — pulled
  * verbatim from a real completed report (Job #20443, the same job this template was

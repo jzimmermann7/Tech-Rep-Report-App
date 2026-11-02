@@ -1,3 +1,4 @@
+import { inlineHtml, isHeadingLine } from "../draft/inlineFormat";
 import { promises as fs } from "fs";
 import path from "path";
 import sharp from "sharp";
@@ -105,7 +106,9 @@ function renderTable(table: ParsedTable, options?: { columnBlocks?: number; note
 /** Line-based markup matching APG's usual report style: a short line ending in ":" is a
  * (subheading), a line starting with "- " is a bullet under whatever came before it, "NOTE:" at
  * the start of a line gets bolded, and everything else is a plain paragraph — not one flowing
- * block of prose. Blank lines just separate groups; they don't need their own markup. */
+ * block of prose. Blank lines just separate groups; they don't need their own markup. Within a
+ * line, **bold** / __underline__ / //italic// from the review screen's editor print as such
+ * (inlineFormat.ts). */
 function renderNarrative(text: string | undefined): string {
   if (!text) return `<p class="missing">No draft generated yet for this section.</p>`;
 
@@ -129,17 +132,17 @@ function renderNarrative(text: string | undefined): string {
         parts.push(`<ul class="narrative-list">`);
         listOpen = true;
       }
-      parts.push(`<li>${escapeHtml(line.slice(2))}</li>`);
+      parts.push(`<li>${inlineHtml(line.slice(2))}</li>`);
       continue;
     }
     closeList();
     if (/^NOTE:/i.test(line)) {
       const rest = line.slice(line.indexOf(":") + 1).trim();
-      parts.push(`<p><strong>NOTE:</strong> ${escapeHtml(rest)}</p>`);
-    } else if (line.endsWith(":") && line.length <= 60) {
-      parts.push(`<p class="subhead">${escapeHtml(line)}</p>`);
+      parts.push(`<p><strong>NOTE:</strong> ${inlineHtml(rest)}</p>`);
+    } else if (isHeadingLine(line)) {
+      parts.push(`<p class="subhead">${inlineHtml(line)}</p>`);
     } else {
-      parts.push(`<p>${escapeHtml(line)}</p>`);
+      parts.push(`<p>${inlineHtml(line)}</p>`);
     }
   }
   closeList();
