@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { scanJobFolder } from "@/lib/ingest/scanJobFolder";
 import { resolveReportTemplate } from "@/lib/report-templates";
-import { loadJobState, saveJobState, applySectionOrder, ensureReportStartDate } from "@/lib/state/jobState";
+import { mutateJobState, applySectionOrder, ensureReportStartDate } from "@/lib/state/jobState";
 import { autoDraftJob } from "@/lib/draft/autoDraft";
 
 export async function POST(request: NextRequest) {
@@ -15,11 +15,13 @@ export async function POST(request: NextRequest) {
     // tech rep lands on a completed draft to review rather than a page of "Generate" buttons.
     // Never throws — per-section failures are recorded as `draftError` on that section alone.
     await autoDraftJob(scanResult);
-    const state = await loadJobState(jobRoot);
     // First time this job's ever been scanned: lock in today as the cover's "Date" -- the day
     // the tech rep actually started the report, not a date pulled from some source file (or left
-    // blank). A no-op on every later scan once that's set.
-    if (ensureReportStartDate(state)) await saveJobState(state);
+    // blank). A no-op on every later scan once that's set. Goes through the per-job save queue
+    // like every other state change, so it can't overwrite a save that lands at the same time.
+    const state = await mutateJobState(jobRoot, (s) => {
+      ensureReportStartDate(s);
+    });
 
     const sections = scanResult.sections.map((section) => {
       const sectionState = state.sections[section.id] ?? {};

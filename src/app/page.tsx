@@ -5,6 +5,7 @@ import type { JobScanResult, SectionScanResult } from "@/lib/ingest/scanJobFolde
 import type { JobFile } from "@/lib/ingest/fileWalk";
 import { COVER_FIELD_ORDER } from "@/lib/ingest/jobMetadata";
 import type { SectionState } from "@/lib/state/jobState";
+import { RichTextEditor } from "./RichTextEditor";
 
 type SectionWithState = SectionScanResult & { state: SectionState };
 type ScanResponse = Omit<JobScanResult, "sections"> & { sections: SectionWithState[]; sectionOrder?: string[] };
@@ -177,19 +178,27 @@ function FolderPicker({ onJobFolderChosen, onBack }: { onJobFolderChosen: (path:
       return;
     }
     setSearching(true);
+    // A newer keystroke cancels the older search, so a slow earlier query ("2") can't land after
+    // and overwrite the results for the one actually typed ("20992").
+    const controller = new AbortController();
     const handle = setTimeout(async () => {
       try {
-        const res = await fetch(`/api/browse?dir=${encodeURIComponent(dir)}&q=${encodeURIComponent(query.trim())}`);
+        const res = await fetch(`/api/browse?dir=${encodeURIComponent(dir)}&q=${encodeURIComponent(query.trim())}`, { signal: controller.signal });
         const data = await res.json();
-        if (res.ok) {
+        if (res.ok && !controller.signal.aborted) {
           setSearchResults(data.results ?? []);
           setSearchTruncated(!!data.truncated);
         }
+      } catch {
+        // aborted by a newer keystroke
       } finally {
-        setSearching(false);
+        if (!controller.signal.aborted) setSearching(false);
       }
     }, 300);
-    return () => clearTimeout(handle);
+    return () => {
+      clearTimeout(handle);
+      controller.abort();
+    };
   }, [query, dir, isDriveList]);
 
   const searchActive = searchResults !== null;
@@ -229,7 +238,7 @@ function FolderPicker({ onJobFolderChosen, onBack }: { onJobFolderChosen: (path:
           <div className="folder-search">
             <input
               type="text"
-              className="folder-search-input"
+              className={`folder-search-input ${searching ? "searching" : ""}`}
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Search job folders inside here…"
@@ -700,6 +709,9 @@ function NarrativeEditor({
   // Keyed by section.id in SectionPanel below, so this remounts (and re-derives its initial
   // state from `section`) whenever the reviewer switches sections — no sync effect needed.
   const [draft, setDraft] = useState(section.state.content ?? "");
+  // The rich editor only reads its starting text on mount, so a draft that replaces the text
+  // wholesale (a fresh draft or Claude's revision) bumps this to remount it with the new text.
+  const [editorKey, setEditorKey] = useState(0);
   const [instruction, setInstruction] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -714,6 +726,7 @@ function NarrativeEditor({
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
       setDraft(data.content ?? "");
+      setEditorKey((k) => k + 1);
       onUpdated(data.content ?? "");
       setInstruction("");
     } catch (e) {
@@ -745,7 +758,7 @@ function NarrativeEditor({
           instruction&quot; to ask Claude for a fresh attempt.
         </p>
       )}
-      <textarea className="draft-textarea" value={draft} onChange={(e) => setDraft(e.target.value)} placeholder="No draft yet — flagged for manual review." />
+      <RichTextEditor key={editorKey} initialValue={draft} onChange={setDraft} placeholder="No draft yet — flagged for manual review." />
       <div className="toolbar">
         <button className="secondary" disabled={busy} onClick={saveManualEdit}>
           Save Edit
@@ -883,10 +896,13 @@ function PhotoSetEditor({ jobRoot, section }: { jobRoot: string; section: Sectio
         <div className="photo-grid">
           {shown.map((f) => (
             <div key={f.relativePath} className={`photo-tile ${selected.includes(f.relativePath) ? "selected" : ""}`} onClick={() => toggle(f.relativePath)}>
+              {/* A small cached thumbnail (w=360), not the 5 MB camera original -- see the
+                  photo-file route. The generated report still embeds the full photo. */}
               <img
-                src={`/api/photo-file?jobRoot=${encodeURIComponent(jobRoot)}&path=${encodeURIComponent(f.relativePath)}`}
+                src={`/api/photo-file?jobRoot=${encodeURIComponent(jobRoot)}&path=${encodeURIComponent(f.relativePath)}&w=360`}
                 alt={f.relativePath}
                 loading="lazy"
+                decoding="async"
               />
               <div className="caption">{f.relativePath.split("/").pop()}</div>
             </div>
