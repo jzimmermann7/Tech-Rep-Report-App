@@ -4,10 +4,9 @@ import type { ReportTemplate } from "./types";
 // Power, plus notes from Jonathan on which exhibits are conditional vs. near-universal). Unlike
 // the I&A Report, this has no narrative summary sections at all (no I&A Summary, FPI/Visual
 // Summary, or Dimensional Summary -- those describe incoming findings, which this deliverable
-// doesn't restate) -- just a Repair Summary (reused from the I&A Report's own recommendedRepairs
-// section/data, since it's the same underlying repair-router/CDS source either way -- titled
-// differently here per tech rep feedback: a Final Report documents repairs already performed,
-// it isn't recommending anything, so "Recommended Repairs" doesn't fit) followed by a run of
+// doesn't restate) -- just a Repair Summary (APG's standard past-tense list of what was done, per
+// bucket stage -- a Final Report documents repairs already performed, it isn't recommending
+// anything) followed by a run of
 // completion-stage re-checks and certifications. Section order here matches the real report's own
 // page order as closely as this app's rendering pipeline supports (see renderReportHtml.ts's
 // INLINE_ATTACH_SECTIONS): dimensional re-checks and true attach-as-is certifications /
@@ -31,26 +30,14 @@ export const finalReportTemplate: ReportTemplate = {
       automationConfidence: "high",
     },
     {
-      id: "recommendedRepairs",
+      // APG's standard past-tense Repair Summary for the job's stage (see repairSummaryTemplates.ts),
+      // not the I&A Report's router-derived Recommended Repairs -- its own section id so the two
+      // reports' texts and edits stay independent. No source file: the router isn't consulted, so
+      // consumables, weld wire and powders can't leak in.
+      id: "repairSummary",
       title: "Repair Summary",
-      sourceRules: [
-        {
-          kind: "filenamePattern",
-          pattern: /repair[_ -]?router/i,
-          excludePattern: /^copy of/i,
-          requiredExtensions: [".xlsm", ".xlsx"],
-        },
-        {
-          // Some customers' jobs have no repair-router file at all -- a "Repair CDS" reference
-          // workbook stands in instead (see repairCds.ts), confirmed against Job 20436 ("Repair
-          // CDS.xlsm") and Job 20668, a different customer unit/contract ("CDS Repair.xlsm" --
-          // word order isn't consistent).
-          kind: "filenamePattern",
-          pattern: /repair\s*cds|cds\s*repair/i,
-          requiredExtensions: [".xlsm", ".xlsx"],
-        },
-      ],
-      generation: "llm-narrative",
+      sourceRules: [],
+      generation: "standard-list",
       automationConfidence: "high",
     },
     {

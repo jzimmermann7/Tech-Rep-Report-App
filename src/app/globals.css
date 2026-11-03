@@ -770,6 +770,37 @@ button.generate-report:active:not(:disabled) {
   text-align: inherit;
 }
 
+/* The ✕ / ↺ that removes a table row from the report (or puts it back); a removed row stays
+   visible, struck through and dimmed, so it can be restored. */
+.preview-table .row-action-cell {
+  width: 34px;
+  text-align: center;
+  padding: 0 2px;
+  background: transparent;
+  border: none;
+}
+
+button.row-remove-btn {
+  padding: 2px 7px;
+  border: none;
+  background: transparent;
+  box-shadow: none;
+  color: #7d93bd;
+  font-size: 13px;
+  line-height: 1;
+}
+
+button.row-remove-btn:hover:not(:disabled) {
+  background: #c0263b;
+  color: #ffffff;
+  box-shadow: none;
+}
+
+.preview-table tr.row-removed td input.table-cell-input {
+  text-decoration: line-through;
+  opacity: 0.45;
+}
+
 .preview-table td input.table-cell-input:focus {
   outline: 2px solid #0b3d91;
   outline-offset: 1px;

@@ -60,6 +60,16 @@ export interface SectionState {
    * render, in both the review screen and the generated PDF -- never written back to the source
    * spreadsheet itself. */
   tableEdits?: Record<string, string>;
+  /** Table sections: rows the tech rep removed, by the row's index in the parsed table (see
+   * applyTableEdits) -- e.g. a bucket that doesn't belong on the Final Ship Serial Number List.
+   * Cell edits are keyed by the same original indexes, so removing a row never shifts them. */
+  removedRows?: number[];
+  /** Table sections: how many blank rows the tech rep added at the end of the table. Their cells
+   * are filled in through tableEdits, keyed by index (parsed row count + 0, +1, ...). */
+  addedRows?: number;
+  /** Notes printed under a standard-list section's bullets (the Final Report's Repair Summary) --
+   * extra wording that isn't one of the standard steps, e.g. a note about scrap replacements. */
+  summaryNotes?: string;
   /** Freeform text for the real form's own blank "NOTES:" box under the table -- a reviewer's
    * typed remarks standing in for what would be handwritten on the paper form, not one of this
    * app's own automated notes (which live in ParsedTable.notes instead). */
@@ -103,7 +113,9 @@ export interface JobState {
 export function applySectionOrder<T extends { id: string }>(sections: T[], order: string[] | undefined): T[] {
   if (!order || order.length === 0) return sections;
   const byId = new Map(sections.map((s) => [s.id, s]));
-  const placed = order.map((id) => byId.get(id)).filter((s): s is T => Boolean(s));
+  // The Final Report's Repair Summary used to be the shared "recommendedRepairs" section; a job
+  // that already reordered its tabs keeps that section's place under its new id.
+  const placed = order.map((id) => byId.get(id) ?? (id === "recommendedRepairs" ? byId.get("repairSummary") : undefined)).filter((s): s is T => Boolean(s));
   const placedIds = new Set(placed.map((s) => s.id));
   return [...placed, ...sections.filter((s) => !placedIds.has(s.id))];
 }

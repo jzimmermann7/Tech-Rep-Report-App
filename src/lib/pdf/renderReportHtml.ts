@@ -264,10 +264,23 @@ const REPORT_STYLES = (apgBlue: string, apgBarGray: string) => `
      could end up above step 8). auto fills the left column all the way down first, the way the
      steps are actually meant to be read, and only starts the right column once the left one is
      genuinely full. */
-  .repairs-columns { column-count: 2; column-gap: 28px; column-fill: auto; }
+  /* min-height: for a list shorter than a page, Chrome has no page-bottom to fill down to and
+     balances the two columns instead (the left column stops partway down). Giving the box the
+     height of the page below the letterhead makes "fill the left column first" hold for every
+     list length; a longer list still flows onto further pages as before. */
+  .repairs-columns { column-count: 2; column-gap: 28px; column-fill: auto; min-height: 8.6in; }
+  /* With notes under the list, the columns balance instead of filling the page -- otherwise the
+     list uses the whole page and the notes land on a page of their own. */
+  .repairs-columns.with-notes { column-fill: balance; min-height: 0; }
   /* 16px (was 13px) per tech rep feedback -- closer to the summaries' size so everything looks
      consistent, while still fitting a typical list on one page in two columns. */
   .repairs-columns p { font-size: 16px; line-height: 1.35; margin: 0 0 5px; break-inside: avoid; }
+  /* The Final Report's Repair Summary is a bulleted list in the same columns: same size and spacing
+     per line as the paragraph version above. */
+  .repairs-columns ul.narrative-list { margin: 0 0 5px; padding-left: 20px; }
+  .repairs-columns li { font-size: 16px; line-height: 1.35; margin: 0 0 5px; break-inside: avoid; }
+  /* Notes under the Repair Summary's list (e.g. a note about scrap replacements), full width. */
+  .summary-notes { margin-top: 18px; padding-top: 10px; border-top: 1px solid #ccc; }
 
   /* Letterhead used at the top of every page after the cover, matching APG's standard report
      header: small logo, centered bold title, blue-to-gray bar underneath. The logo is absolutely
@@ -453,6 +466,19 @@ export async function renderReportSegments(scanIn: JobScanResult, state: JobStat
     // SectionState.excludeFromReport).
     if (state.sections[id]?.excludeFromReport) continue;
 
+    if (section.generation === "standard-list") {
+      // The Final Report's Repair Summary: the (edited) standard bullet list in the same two-column
+      // layout the Recommended Repairs list uses, then any notes the tech rep typed under it. Left
+      // out entirely when the tech rep removed every line and wrote no notes.
+      const list = contentFor(id)?.trim();
+      const notes = state.sections[id]?.summaryNotes?.trim();
+      if (!list && !notes) continue;
+      const listHtml = list ? `<div class="repairs-columns${notes ? " with-notes" : ""}">${renderNarrative(list)}</div>` : "";
+      const notesHtml = notes ? `<div class="summary-notes">${renderNarrative(notes)}</div>` : "";
+      bodyParts.push(`<section class="report-page narrative-section repairs-section">${pageHeader(section.title, logo)}${listHtml}${notesHtml}</section>`);
+      continue;
+    }
+
     if (section.generation === "llm-narrative") {
       const narrativeHtml = renderNarrative(contentFor(id));
       // Recommended Repairs is just a numbered list of short step labels -- a full-width column
@@ -486,7 +512,8 @@ export async function renderReportSegments(scanIn: JobScanResult, state: JobStat
         segments.push({ kind: "pdf", path: section.printPdfFile.absolutePath });
         continue;
       }
-      const editedTable = section.parsedTable ? applyTableEdits(section.parsedTable, state.sections[id]?.tableEdits) : undefined;
+      const sectionState = state.sections[id];
+      const editedTable = section.parsedTable ? applyTableEdits(section.parsedTable, sectionState?.tableEdits, sectionState?.removedRows, sectionState?.addedRows) : undefined;
       // A table section with nothing to show (no source file for it, or a table with zero rows --
       // e.g. Wall Thickness/Dovetail on solid buckets, or a Scrap Report with nothing scrapped) is
       // left out of the report entirely rather than printing an empty "No data available" page,

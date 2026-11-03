@@ -7,7 +7,8 @@ export type GenerationStrategy =
   | "table-from-source" // deterministic table parsed from a source file, pass/fail computed in code
   | "llm-narrative" // Claude text call over extracted structured data
   | "llm-vision-select" // Claude vision call over candidate images
-  | "attach-as-is"; // no generation, just slot the matched file(s) in
+  | "attach-as-is" // no generation, just slot the matched file(s) in
+  | "standard-list"; // APG's fixed standard bullet list for the job's stage, editable (Final Report's Repair Summary)
 
 export type AutomationConfidence = "high" | "medium" | "low";
 
