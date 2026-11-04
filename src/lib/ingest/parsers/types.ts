@@ -29,19 +29,36 @@ export interface ParsedTable {
  * order — stable because a given section's table always comes from the same parser/source shape,
  * so the same row keeps the same index scan to scan. Returns a new table; never mutates the one
  * passed in, since callers (the review screen, report generation) also read the un-edited version. */
-export function applyTableEdits(table: ParsedTable, edits: Record<string, string> | undefined): ParsedTable {
-  if (!edits || Object.keys(edits).length === 0) return table;
-  const rows = table.rows.map((row, i) => {
-    let changed = false;
-    const next = { ...row };
-    for (const c of table.columns) {
-      const key = `${i}:${c}`;
-      if (Object.prototype.hasOwnProperty.call(edits, key)) {
-        next[c] = edits[key];
-        changed = true;
+export function applyTableEdits(
+  table: ParsedTable,
+  edits: Record<string, string> | undefined,
+  removedRows?: number[],
+  addedRows?: number
+): ParsedTable {
+  const hasEdits = Boolean(edits) && Object.keys(edits ?? {}).length > 0;
+  const removed = new Set(removedRows ?? []);
+  const added = Math.max(0, addedRows ?? 0);
+  if (!hasEdits && removed.size === 0 && added === 0) return table;
+
+  // Rows the tech rep added sit after the parsed ones, blank until their cells are filled in via
+  // edits (keyed by the same running index), so one index space covers parsed and added rows.
+  const blank = Object.fromEntries(table.columns.map((c) => [c, ""]));
+  const allRows = [...table.rows, ...Array.from({ length: added }, () => ({ ...blank }))];
+  const rows = allRows
+    .map((row, i) => {
+      let changed = false;
+      const next = { ...row };
+      for (const c of table.columns) {
+        const key = `${i}:${c}`;
+        if (edits && Object.prototype.hasOwnProperty.call(edits, key)) {
+          next[c] = edits[key];
+          changed = true;
+        }
       }
-    }
-    return changed ? next : row;
-  });
+      return { index: i, row: changed ? next : row };
+    })
+    // Removal last, against the original indexes, so a removed row never shifts anyone's edits.
+    .filter(({ index }) => !removed.has(index))
+    .map(({ row }) => row);
   return { ...table, rows };
 }

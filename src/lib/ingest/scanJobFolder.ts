@@ -17,6 +17,7 @@ import { extractEmbeddedPhotos } from "./parsers/photoTemplatePdf";
 import { xlsxHasEmbeddedImages, renderXlsxSheetToPdf } from "./parsers/xlsxToPdf";
 import type { ParsedTable } from "./parsers/types";
 import { identifyByContent } from "./contentIdentify";
+import { repairSummaryStage } from "../draft/repairSummaryTemplates";
 
 export type SectionStatus = "ready" | "needs-attention" | "missing";
 
@@ -574,6 +575,22 @@ export async function scanJobFolder(jobRoot: string, template: ReportTemplate): 
         automationConfidence: section.automationConfidence,
         status: "ready",
         statusReason: `From ${metadata.source}.`,
+        matchedFiles: [],
+      });
+      continue;
+    }
+    if (section.generation === "standard-list") {
+      // No source file -- APG's fixed list for the job's bucket stage (see repairSummaryTemplates.ts).
+      const stage = repairSummaryStage(metadata);
+      resolved.set(section.id, {
+        id: section.id,
+        title: section.title,
+        generation: section.generation,
+        automationConfidence: section.automationConfidence,
+        status: stage ? "ready" : "needs-attention",
+        statusReason: stage
+          ? `APG's standard stage ${stage} list -- remove the steps that didn't apply to this job and add any that did.`
+          : "Couldn't tell which bucket stage this is from the job's part name -- fill the list in manually.",
         matchedFiles: [],
       });
       continue;

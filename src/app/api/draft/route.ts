@@ -4,6 +4,7 @@ import { resolveReportTemplate } from "@/lib/report-templates";
 import { updateSectionState, loadJobState } from "@/lib/state/jobState";
 import { draftFpiVisual, draftRecommendedRepairs, draftDimensionalSummary, draftIaSummary } from "@/lib/draft/narrative";
 import { selectBestPhotos } from "@/lib/draft/photoSelect";
+import { buildRepairSummaryDraft } from "@/lib/draft/repairSummaryTemplates";
 
 export async function POST(request: NextRequest) {
   const body = await request.json();
@@ -31,6 +32,13 @@ export async function POST(request: NextRequest) {
         // revising this section outright.
         const crackMapAvailable = bySectionId.get("crackMap")?.status !== "missing";
         content = await draftFpiVisual(section.parsedRouter, ctx, crackMapAvailable);
+        break;
+      }
+      case "repairSummary": {
+        // Resets the list to APG's standard one for this job's stage (no LLM -- see
+        // repairSummaryTemplates.ts); any instruction is ignored.
+        content = buildRepairSummaryDraft(scanResult.metadata);
+        if (!content) return NextResponse.json({ error: "Couldn't tell which bucket stage this is from the job's part name." }, { status: 400 });
         break;
       }
       case "recommendedRepairs": {

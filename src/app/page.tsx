@@ -512,6 +512,10 @@ function TablePreview({
   const [notesText, setNotesText] = useState(section.state.tableNotes ?? "");
   const [busy, setBusy] = useState(false);
   const [dirty, setDirty] = useState(false);
+  // Rows the tech rep removed (by original row index) and blank rows added at the end -- see
+  // SectionState.removedRows / addedRows. Local until saved, like the cell edits.
+  const [removed, setRemoved] = useState<number[]>(section.state.removedRows ?? []);
+  const [added, setAdded] = useState<number>(section.state.addedRows ?? 0);
 
   // Always available, even when a good match (a parsed table and/or a print-ready PDF) was
   // already found -- automatic matching can still land on the wrong file, so the tech rep always
@@ -556,7 +560,21 @@ function TablePreview({
     );
   }
 
+  // The parsed rows plus any blank rows added at the end -- one index space for edits and removals.
+  const blankRow = Object.fromEntries(table.columns.map((c) => [c, ""]));
+  const rows = [...table.rows, ...Array.from({ length: added }, () => blankRow)];
+
   const cellValue = (rowIndex: number, col: string, raw: string) => edits[`${rowIndex}:${col}`] ?? raw ?? "";
+
+  const toggleRemoved = (rowIndex: number) => {
+    setRemoved((prev) => (prev.includes(rowIndex) ? prev.filter((i) => i !== rowIndex) : [...prev, rowIndex]));
+    setDirty(true);
+  };
+
+  const addRow = () => {
+    setAdded((n) => n + 1);
+    setDirty(true);
+  };
 
   const editCell = (rowIndex: number, col: string, value: string) => {
     setEdits((prev) => ({ ...prev, [`${rowIndex}:${col}`]: value }));
@@ -569,14 +587,14 @@ function TablePreview({
       await fetch("/api/section-state", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ jobRoot, sectionId: section.id, patch: { tableEdits: edits, tableNotes: notesText } }),
+        body: JSON.stringify({ jobRoot, sectionId: section.id, patch: { tableEdits: edits, tableNotes: notesText, removedRows: removed, addedRows: added } }),
       });
       // This component remounts fresh (re-deriving `edits`/`notesText` from section.state) every
       // time its tab is switched away from and back to -- without patching the saved values into
       // the parent's own `scan` state right here, a save that genuinely succeeded on disk still
       // looked like it vanished the moment you came back to this tab, because the remount was
       // reading `section.state` from before this save ever happened.
-      patchSectionState(section.id, { tableEdits: edits, tableNotes: notesText });
+      patchSectionState(section.id, { tableEdits: edits, tableNotes: notesText, removedRows: removed, addedRows: added });
       setDirty(false);
     } finally {
       setBusy(false);
@@ -586,40 +604,69 @@ function TablePreview({
   // Serial Number List is a long, simple 3-column list (matching the real DS-0554 form, which
   // itself lays it out as three parallel column blocks) -- reflowing it the same way here keeps
   // the on-screen review matching what actually prints, instead of one tall single column.
-  const columnBlocks = section.id === "serialNumberList" && table.rows.length > 3 ? 3 : 1;
+  const columnBlocks = section.id === "serialNumberList" && rows.length > 3 ? 3 : 1;
   // chunkRows slices rows into sequential ranges (chunk 0 = rows[0..perChunk-1], chunk 1 =
   // rows[perChunk..2*perChunk-1], ...), so a row's real index -- the one edits are keyed
   // against -- is derivable from its chunk and its position within it, without chunkRows itself
   // needing to carry indices through.
-  const perChunk = Math.ceil(table.rows.length / columnBlocks);
+  const perChunk = Math.ceil(rows.length / columnBlocks);
 
   // Keyed by column index, not the column name itself -- a source form's own header row can
   // repeat or leave blank a label (confirmed on a real job: a wall-thickness form variant with an
   // unlabeled/merged header cell produced two blank column names), and React requires unique keys
   // regardless of what the underlying data looks like.
-  const headerCells = table.columns.map((c, ci) => (
-    <th key={ci} data-col={c}>
-      {c}
-    </th>
-  ));
+  const headerCells = [
+    ...table.columns.map((c, ci) => (
+      <th key={ci} data-col={c}>
+        {c}
+      </th>
+    )),
+    <th key="remove" className="row-action-cell" aria-label="Remove row" />,
+  ];
 
   const editableCell = (rowIndex: number, c: string, row: Record<string, string>, colIndex: number) => {
     const value = cellValue(rowIndex, c, row[c]);
     return (
       <td key={colIndex} data-col={c} className={value.includes("OUT OF SPEC") ? "fail" : ""}>
-        <input type="text" className="table-cell-input" value={value} onChange={(e) => editCell(rowIndex, c, e.target.value)} />
+        <input
+          type="text"
+          className="table-cell-input"
+          value={value}
+          disabled={removed.includes(rowIndex)}
+          onChange={(e) => editCell(rowIndex, c, e.target.value)}
+        />
       </td>
+    );
+  };
+
+  // One table row: its editable cells plus the ✕ that removes it from the report (↺ puts it back).
+  const renderRow = (rowIndex: number, row: Record<string, string>) => {
+    const isRemoved = removed.includes(rowIndex);
+    return (
+      <tr key={rowIndex} className={isRemoved ? "row-removed" : ""}>
+        {table.columns.map((c, ci) => editableCell(rowIndex, c, row, ci))}
+        <td className="row-action-cell">
+          <button
+            type="button"
+            className="row-remove-btn"
+            title={isRemoved ? "Put this row back" : "Remove this row from the report"}
+            onClick={() => toggleRemoved(rowIndex)}
+          >
+            {isRemoved ? "↺" : "✕"}
+          </button>
+        </td>
+      </tr>
     );
   };
 
   return (
     <div style={{ overflowX: "auto" }}>
       <p className="file-count">
-        Source: {table.sourceFile} — sheet &quot;{table.sheetName}&quot; — {table.sampleSize} row(s)
+        Source: {table.sourceFile} — sheet &quot;{table.sheetName}&quot; — {rows.length - removed.filter((i) => i < rows.length).length} row(s)
         {table.populationSize ? ` of ${table.populationSize}` : ""}
         {typeof table.outOfSpecCount === "number" ? ` — ${table.outOfSpecCount} out of spec` : ""}
       </p>
-      <p className="file-count">Click any cell to correct it — a typo'd serial, a re-measured value. Save when you're done.</p>
+      <p className="file-count">Click any cell to correct it, ✕ to remove a row, or add a row at the bottom. Save when you're done.</p>
       {table.notes.map((n, i) => (
         <p key={i} className="confidence-note">
           {n}
@@ -636,7 +683,7 @@ function TablePreview({
       )}
       {columnBlocks > 1 ? (
         <div className="table-columns">
-          {chunkRows(table.rows, columnBlocks).map((rowsChunk, blockIdx) => (
+          {chunkRows(rows, columnBlocks).map((rowsChunk, blockIdx) => (
             <table className="preview-table table-block" key={blockIdx}>
               <thead>
                 <tr>{headerCells}</tr>
@@ -644,7 +691,7 @@ function TablePreview({
               <tbody>
                 {rowsChunk.map((row, i) => {
                   const rowIndex = blockIdx * perChunk + i;
-                  return <tr key={rowIndex}>{table.columns.map((c, ci) => editableCell(rowIndex, c, row, ci))}</tr>;
+                  return renderRow(rowIndex, row);
                 })}
               </tbody>
             </table>
@@ -656,9 +703,7 @@ function TablePreview({
             <tr>{headerCells}</tr>
           </thead>
           <tbody>
-            {table.rows.map((row, i) => (
-              <tr key={i}>{table.columns.map((c, ci) => editableCell(i, c, row, ci))}</tr>
-            ))}
+            {rows.map((row, i) => renderRow(i, row))}
             {(table.summaryRows ?? []).map((row, i) => (
               <tr key={`summary-${i}`} style={{ fontWeight: 700, background: "#f0f0f0" }}>
                 {table.columns.map((c, ci) => (
@@ -686,6 +731,9 @@ function TablePreview({
         </div>
       )}
       <div className="toolbar">
+        <button className="secondary" type="button" onClick={addRow}>
+          + Add row
+        </button>
         <button disabled={busy || !dirty} onClick={save}>
           {busy ? "Saving..." : dirty ? "Save changes" : "Saved"}
         </button>
@@ -700,12 +748,22 @@ function NarrativeEditor({
   section,
   onUpdated,
   turbineModel,
+  patchSectionState,
+  reportType,
 }: {
   jobRoot: string;
   section: SectionWithState;
   onUpdated: (content: string) => void;
   turbineModel: string;
+  patchSectionState: (sectionId: string, patch: Partial<SectionState>) => void;
+  reportType: ReportTypeId | null;
 }) {
+  // The Final Report's Repair Summary: APG's standard bullet list, edited here, plus a notes box
+  // that prints under it. No Claude revise box -- "Reset to standard list" rebuilds the list.
+  const standardList = section.generation === "standard-list";
+  const [notes, setNotes] = useState(section.state.summaryNotes ?? "");
+  const [notesDirty, setNotesDirty] = useState(false);
+  const [confirmReset, setConfirmReset] = useState(false);
   // Keyed by section.id in SectionPanel below, so this remounts (and re-derives its initial
   // state from `section`) whenever the reviewer switches sections — no sync effect needed.
   const [draft, setDraft] = useState(section.state.content ?? "");
@@ -721,7 +779,7 @@ function NarrativeEditor({
       const res = await fetch("/api/draft", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ jobRoot, sectionId: section.id, instruction: withInstruction }),
+        body: JSON.stringify({ jobRoot, sectionId: section.id, instruction: withInstruction, reportType }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
@@ -750,6 +808,21 @@ function NarrativeEditor({
     }
   };
 
+  const saveNotes = async () => {
+    setBusy(true);
+    try {
+      await fetch("/api/section-state", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jobRoot, sectionId: section.id, patch: { summaryNotes: notes } }),
+      });
+      patchSectionState(section.id, { summaryNotes: notes });
+      setNotesDirty(false);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <div>
       {section.state.draftError && !draft && (
@@ -763,18 +836,63 @@ function NarrativeEditor({
         <button className="secondary" disabled={busy} onClick={saveManualEdit}>
           Save Edit
         </button>
+        {standardList &&
+          (confirmReset ? (
+            <>
+              <span className="file-count">Replace your edits with the standard list?</span>
+              <button
+                disabled={busy}
+                onClick={() => {
+                  setConfirmReset(false);
+                  runDraft();
+                }}
+              >
+                Yes, reset
+              </button>
+              <button className="secondary" onClick={() => setConfirmReset(false)}>
+                Keep my edits
+              </button>
+            </>
+          ) : (
+            <button className="secondary" disabled={busy} onClick={() => setConfirmReset(true)}>
+              Reset to standard list
+            </button>
+          ))}
       </div>
-      <div className="toolbar">
-        <input
-          type="text"
-          placeholder="Instruction for Claude, e.g. 'make this more concise'"
-          value={instruction}
-          onChange={(e) => setInstruction(e.target.value)}
-        />
-        <button disabled={busy || !instruction} onClick={() => runDraft(instruction)}>
-          Revise with instruction
-        </button>
-      </div>
+      {standardList ? (
+        <div>
+          <p className="file-count" style={{ marginTop: 14 }}>
+            Notes — printed under the list (e.g. a note about scrap replacements). Leave blank for none.
+          </p>
+          <textarea
+            className="draft-textarea"
+            style={{ minHeight: 110 }}
+            value={notes}
+            onChange={(e) => {
+              setNotes(e.target.value);
+              setNotesDirty(true);
+            }}
+            placeholder="Additional wording for this report…"
+          />
+          <div className="toolbar">
+            <button className="secondary" disabled={busy || !notesDirty} onClick={saveNotes}>
+              Save Notes
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="toolbar">
+          <input
+            type="text"
+            placeholder="Instruction for Claude, e.g. 'make this more concise'"
+            value={instruction}
+            onChange={(e) => setInstruction(e.target.value)}
+          />
+          <button disabled={busy || !instruction} onClick={() => runDraft(instruction)}>
+            Revise with instruction
+          </button>
+        </div>
+      )}
       {section.id === "iaSummary" && <StandardDiagramToggle jobRoot={jobRoot} section={section} turbineModel={turbineModel} />}
     </div>
   );
@@ -1291,8 +1409,10 @@ function SectionPanel({
   onReviewed,
   onToggleExcluded,
   patchSectionState,
+  reportType,
 }: {
   jobRoot: string;
+  reportType: ReportTypeId | null;
   section: SectionWithState;
   metadata: JobScanResult["metadata"];
   onRefresh: () => void;
@@ -1366,13 +1486,15 @@ function SectionPanel({
           the editor's local `draft` state was set once at mount and never picked up content
           that appeared behind it, so the box kept showing "no draft yet" until the reviewer
           clicked to a different section and back. */}
-      {section.generation === "llm-narrative" && (
+      {(section.generation === "llm-narrative" || section.generation === "standard-list") && (
         <NarrativeEditor
           key={`${section.id}-${section.state.lastGeneratedAt ?? ""}`}
           jobRoot={jobRoot}
           section={section}
           onUpdated={onRefresh}
           turbineModel={metadata.turbineModel}
+          patchSectionState={patchSectionState}
+          reportType={reportType}
         />
       )}
       {section.generation === "table-from-source" && (
@@ -1662,6 +1784,7 @@ export default function Home() {
         <main className="main-panel">
           <SectionPanel
             jobRoot={jobRoot}
+            reportType={reportType}
             section={selectedSection}
             metadata={scan.metadata}
             onRefresh={() => runScan(jobRoot)}

@@ -1,6 +1,7 @@
 import type { JobScanResult, SectionScanResult } from "../ingest/scanJobFolder";
 import { loadJobState, updateSectionStates, type SectionState } from "../state/jobState";
 import { buildFpiVisualDraft, buildRecommendedRepairsDraft, buildDimensionalSummaryDraft, buildIaSummaryDraft, type DimCategoryInput } from "./narrative";
+import { buildRepairSummaryDraft } from "./repairSummaryTemplates";
 import { selectBestPhotos } from "./photoSelect";
 
 /** A dimensional category's source for the narrative builders -- its parsed table when readable,
@@ -74,6 +75,16 @@ export async function autoDraftJob(scan: JobScanResult): Promise<void> {
     }
   } else {
     jobs.push(missingDataStep("recommendedRepairs", "No repair-router file was found for this job — draft this section manually."));
+  }
+
+  // The Final Report's Repair Summary: APG's standard list for the job's stage, not the router.
+  if (bySectionId.has("repairSummary") && isUntouched("repairSummary")) {
+    const content = buildRepairSummaryDraft(scan.metadata);
+    jobs.push(
+      content
+        ? ["repairSummary", { content, draftError: undefined, lastGeneratedAt: stamp() }]
+        : ["repairSummary", { draftError: "Couldn't tell which bucket stage this is from the job's part name -- fill the list in manually." }]
+    );
   }
 
   const dimTables = {
