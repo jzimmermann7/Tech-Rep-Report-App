@@ -7,10 +7,11 @@ import type { JobMetadata } from "../ingest/jobMetadata";
 // Final Reports for stage 1, 2 and 3 jobs). It's only a starting point: the tech rep removes the
 // steps that didn't apply to the job and adds any that did, in the review screen.
 //
-// Weld wire is deliberately never named -- a weld step just says the weld repair was done.
+// Weld wire never appears as a line of its own (the approved stage 1 list just says the weld repair
+// was done; the approved stage 2 list names the hardface material inside its Z-Notch weld line).
 //
-// Stages 1 and 2 are APG's approved standards, word for word (stage 1 is the F7EA list). Stage 3 is
-// drafted from the completed F7FA Final Reports and still needs APG's sign-off.
+// All three stages are APG's approved standards, word for word: stage 1 is the F7EA list, and stage
+// 2 is also the stage 3 list.
 
 export type RepairSummaryStage = 1 | 2 | 3;
 
@@ -103,46 +104,8 @@ const STAGE_2 = [
   "Final Report",
 ];
 
-const STAGE_3 = [
-  "Shroud Weight Reduction Modification Performed",
-  "Defects Prepped As Required",
-  "Platform Edge Break Performed",
-  "Z-Notches Prepped For Weld Repair",
-  "Pre-Weld Heat Treat",
-  "FPI & Report",
-  "Defects Welded And Blended As Required",
-  "Z-Notch Faces Weld Repaired",
-  "Rail Cutter Tooth Removal Modification Performed",
-  "Dust Blast Clean",
-  "FPI & Report",
-  "Touch-Up As Required",
-  "Post-Weld Heat Treat",
-  "Dust Blast Clean",
-  "FPI / Visual Inspect And Report",
-  "Touch-Up As Required",
-  "Pre-Coat Dimensional Heights Inspected (20 Buckets)",
-  "Airfoil Coating Applied",
-  "Post-Coat Diffusion + Age Heat Treat",
-  "Z-Notches CNC Machined To Specification",
-  "Z-Notches Deburred",
-  "Z-Notches Local FPI Inspected",
-  "Z-Fillet Relief Cutback Modification Performed",
-  "Touch-Up As Required",
-  "Final Dimensional Inspect Z-Notches (100%)",
-  "Full Wheel Fit-Up Check Performed",
-  "Dust Blast Clean",
-  "Rails AL/OX Abrasive Coated",
-  "Roots Shot Peened",
-  "Final Visual Inspect",
-  "Damper Pin Rock Check Inspection ({TIL}) Performed",
-  "Final Dimensional Inspect Rail Heights (20 Buckets)",
-  "Moment Weigh, Sequence And Sticker",
-  "Final Ship / Moment Weigh SN Cross Check Performed",
-  "Final Photograph",
-  "Final Report",
-];
-
-const TEMPLATES: Record<RepairSummaryStage, string[]> = { 1: STAGE_1, 2: STAGE_2, 3: STAGE_3 };
+// APG uses the same approved list for stage 2 and stage 3 buckets.
+const TEMPLATES: Record<RepairSummaryStage, string[]> = { 1: STAGE_1, 2: STAGE_2, 3: STAGE_2 };
 
 /** Which bucket stage a job is, read from its own part/component text ("F7EA 2ND STAGE BUCKETS"). */
 export function repairSummaryStage(metadata: Pick<JobMetadata, "component" | "part">): RepairSummaryStage | null {
